@@ -1632,10 +1632,11 @@ class TextEditor:
     def update_find_replace_button_states(self):
         if hasattr(self, "find_replace_dialog") and self.find_replace_dialog.winfo_exists():
             current_tab = self.get_current_tab()
-            if current_tab and current_tab.text_area.cget('state') == tk.DISABLED:
+            # Check if the current tab is in a filtered view
+            if current_tab and current_tab.is_filtered_view:
                 self.find_dialog_replace_btn.config(state=tk.DISABLED)
                 self.find_dialog_replace_all_btn.config(state=tk.DISABLED)
-            else:
+            else: # Not filtered or no tab
                 self.find_dialog_replace_btn.config(state=tk.NORMAL)
                 self.find_dialog_replace_all_btn.config(state=tk.NORMAL)
         # If dialog doesn't exist, or buttons not created yet, do nothing.
