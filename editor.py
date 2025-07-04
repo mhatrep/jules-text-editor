@@ -33,6 +33,11 @@ class EditorTab:
         self.text_area.bind("<KeyRelease>", self.on_key_or_mouse_release)
         self.text_area.bind("<ButtonRelease-1>", self.on_key_or_mouse_release) # Left mouse button
 
+        # Search highlight tag
+        self.text_area.tag_configure("search_highlight", background="yellow", foreground="black")
+        self.text_area.tag_configure("current_search_highlight", background="orange", foreground="black")
+
+
         # Custom scrollbar that calls our sync method
         self.scrollbar = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.text_area.yview)
         # self.text_area.config(yscrollcommand=self.scrollbar.set) # This will be set via sync_scroll_text
@@ -91,7 +96,13 @@ class EditorTab:
         self.text_area.after(1, self.redraw_line_numbers)
         if event and (str(event.type) == "Modified" or str(event.type) == "Configure"):
             self.app.update_status_bar()
+            if str(event.type) == "Modified": # Clear highlights if text is modified
+                self.clear_search_highlight_tags()
 
+
+    def clear_search_highlight_tags(self):
+        self.text_area.tag_remove("search_highlight", "1.0", tk.END)
+        self.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
 
     def on_key_or_mouse_release(self, event=None):
         # This is primarily for updating line/col in status bar
@@ -258,6 +269,41 @@ class TextEditor:
         # Create main menu
         self.menu_bar = tk.Menu(self.root)
         self.root.config(menu=self.menu_bar)
+
+        # Toolbar
+        self.toolbar_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=2)
+        self.toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+
+        # Example Toolbar Buttons (add more as needed)
+        self.new_btn = ttk.Button(self.toolbar_frame, text="New", command=self.new_file_action_handler)
+        self.new_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        self.open_btn = ttk.Button(self.toolbar_frame, text="Open", command=self.open_file_action_handler)
+        self.open_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        self.save_btn = ttk.Button(self.toolbar_frame, text="Save", command=lambda: self.save_action_handler(save_as_if_needed=False))
+        self.save_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        # Separator could be a Frame with height or specific style
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
+
+        self.cut_btn = ttk.Button(self.toolbar_frame, text="Cut", command=self.cut_action)
+        self.cut_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        self.copy_btn = ttk.Button(self.toolbar_frame, text="Copy", command=self.copy_action)
+        self.copy_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        self.paste_btn = ttk.Button(self.toolbar_frame, text="Paste", command=self.paste_action)
+        self.paste_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
+
+        self.undo_btn = ttk.Button(self.toolbar_frame, text="Undo", command=self.undo_action)
+        self.undo_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+        self.redo_btn = ttk.Button(self.toolbar_frame, text="Redo", command=self.redo_action)
+        self.redo_btn.pack(side=tk.LEFT, padx=2, pady=2)
+
 
         # File menu
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -901,7 +947,44 @@ class TextEditor:
                 pass # No selection
 
         self.find_entry.focus_set()
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        self.found_matches_for_nav = []
+        self.current_match_index_for_nav = -1
+        self.find_dialog_search_dirty_flag = True # Mark dirty on open
+
+        def on_find_settings_changed(*args):
+            self.find_dialog_search_dirty_flag = True
+            # Auto-refresh and find first could be too aggressive on every key stroke in find_what
+            # Let refresh happen on "Find Next" or explicit action for now if dirty.
+            # OR: self.refresh_search_highlights_and_find_first()
+            self.refresh_search_highlights() # Refresh highlights as options change
+            # If there are matches, try to navigate to the first one visible or one near current cursor
+            if self.found_matches_for_nav:
+                # Try to find a match at or after current insert mark
+                text_area = self.get_active_text_area()
+                current_cursor_pos = text_area.index(tk.INSERT) if text_area else "1.0"
+                new_idx = 0
+                for i, (start, end) in enumerate(self.found_matches_for_nav):
+                    if text_area.compare(start, ">=", current_cursor_pos):
+                        new_idx = i
+                        break
+                self.current_match_index_for_nav = new_idx -1 # find_next will increment it
+                # self.navigate_to_match(new_idx) # This would auto-jump
+            else: # No matches found, clear current selection/highlight
+                self.clear_current_search_highlight_active_tab()
+
+
+        self.find_what_var.trace_add("write", on_find_settings_changed)
+        self.case_sensitive_find_var.trace_add("write", on_find_settings_changed)
+        self.whole_word_var.trace_add("write", on_find_settings_changed)
+        self.regex_var.trace_add("write", on_find_settings_changed)
+        # search_backwards_var and wrap_around_var don't change the set of matches, only navigation.
+
+        def on_dialog_close(event=None):
+            self.clear_all_search_highlights_active_tab()
+            dialog.destroy()
+
+        dialog.bind("<Escape>", on_dialog_close)
+        dialog.protocol("WM_DELETE_WINDOW", on_dialog_close) # Handle window close button
 
         # Center dialog
         dialog.update_idletasks()
@@ -1042,124 +1125,122 @@ class TextEditor:
         if not text_area: return "break"
 
         find_what = self.find_what_var.get()
-        if not find_what:
-            messagebox.showinfo("Find Next", "Find string is empty.", parent=self.find_replace_dialog)
+        if not find_what: # No search term, so ensure no highlights exist
+            self.clear_all_search_highlights_active_tab()
+            # messagebox.showinfo("Find Next", "Find string is empty.", parent=self.find_replace_dialog) # Can be noisy
             return "break"
 
-        case_sensitive = self.case_sensitive_find_var.get()
-        whole_word = self.whole_word_var.get()
-        use_regex = self.regex_var.get()
-        wrap_around = self.wrap_around_var.get()
-        search_backwards = self.search_backwards_var.get()
+        # If search settings changed or highlights are otherwise considered dirty, refresh them.
+        # The trace on vars should call refresh_search_highlights already.
+        # self.refresh_search_highlights() # This might be redundant if traces are working, but safe.
 
-        text_area.tag_remove(tk.SEL, "1.0", tk.END) # Clear previous selection
+        if not self.found_matches_for_nav:
+            messagebox.showinfo("Find Next", f"Cannot find '{find_what}'.", parent=self.find_replace_dialog)
+            return "break"
+
+        search_backwards = self.search_backwards_var.get()
+        wrap_around = self.wrap_around_var.get()
+
+        num_matches = len(self.found_matches_for_nav)
+        nav_idx = self.current_match_index_for_nav # Preserve current before modification
 
         if search_backwards:
-            start_index = text_area.index(tk.INSERT + "-1c") if text_area.index(tk.INSERT) != "1.0" else "1.0"
-            stop_index = "1.0"
+            nav_idx -= 1
+            if nav_idx < 0:
+                if wrap_around:
+                    nav_idx = num_matches - 1
+                else: # No wrap
+                    nav_idx = 0
+                    messagebox.showinfo("Find Next", "Beginning of document reached.", parent=self.find_replace_dialog)
+                    # self.navigate_to_match(nav_idx) # Stay at the first match
+                    # return "break" # Or let it navigate to nav_idx=0
         else: # Forward
-            start_index = text_area.index(tk.INSERT)
-            stop_index = tk.END
+            nav_idx += 1
+            if nav_idx >= num_matches:
+                if wrap_around:
+                    nav_idx = 0
+                else: # No wrap
+                    nav_idx = num_matches - 1
+                    messagebox.showinfo("Find Next", "End of document reached.", parent=self.find_replace_dialog)
+                    # self.navigate_to_match(nav_idx) # Stay at the last match
+                    # return "break"
 
-        # If there's a selection, and we are searching forward, start after the selection
-        # If searching backward, start before the selection.
-        # This is implicitly handled by tk.INSERT if selection is made by this find tool.
-        # If user made a selection, tk.INSERT is usually at the end of it.
-
-        found_pos, length = self._search_in_text(text_area, find_what, start_index, stop_index,
-                                                 case_sensitive, whole_word, use_regex, search_backwards)
-
-        if found_pos:
-            end_sel_pos = f"{found_pos} + {length} chars"
-            text_area.tag_add(tk.SEL, found_pos, end_sel_pos)
-            text_area.mark_set(tk.INSERT, end_sel_pos if not search_backwards else found_pos)
-            text_area.see(found_pos)
-            self.find_replace_dialog.lift()
-        else: # Not found in the primary search direction
-            if wrap_around:
-                if search_backwards: # Wrapped from top, now search from end to current tk.INSERT
-                    start_index = tk.END + "-1c" # Start from the very end
-                    # stop_index remains tk.INSERT (original start) or where search began
-                else: # Wrapped from end, now search from beginning to current tk.INSERT
-                    start_index = "1.0"
-                    # stop_index remains tk.INSERT
-
-                wrapped_pos, wrapped_length = self._search_in_text(text_area, find_what, start_index, text_area.index(tk.INSERT),
-                                                                  case_sensitive, whole_word, use_regex, search_backwards)
-                if wrapped_pos:
-                    end_sel_pos = f"{wrapped_pos} + {wrapped_length} chars"
-                    text_area.tag_add(tk.SEL, wrapped_pos, end_sel_pos)
-                    text_area.mark_set(tk.INSERT, end_sel_pos if not search_backwards else wrapped_pos)
-                    text_area.see(wrapped_pos)
-                    self.find_replace_dialog.lift()
-                else:
-                    messagebox.showinfo("Find Next", f"Cannot find '{find_what}'", parent=self.find_replace_dialog)
-            else: # No wrap around
-                messagebox.showinfo("Find Next", f"Cannot find '{find_what}'", parent=self.find_replace_dialog)
+        if 0 <= nav_idx < num_matches:
+            self.navigate_to_match(nav_idx)
+        elif num_matches > 0 : # e.g. wrap is off and went out of bounds, stay at first/last
+             self.navigate_to_match(self.current_match_index_for_nav) # Re-select current if no move
 
         if self.find_replace_dialog and self.find_replace_dialog.winfo_exists():
              self.find_replace_dialog.lift()
         return "break"
 
-
     def replace_once(self, event=None):
         text_area = self.get_active_text_area()
         if not text_area: return "break"
 
-        find_what = self.find_what_var.get()
         replace_with = self.replace_with_var.get()
 
-        if not find_what:
-            messagebox.showinfo("Replace", "Find string is empty.", parent=self.find_replace_dialog)
-            return "break"
+        # Check if there's a current valid highlighted match to replace
+        # This means self.current_match_index_for_nav is valid and points to an item in self.found_matches_for_nav
+        if self.found_matches_for_nav and 0 <= self.current_match_index_for_nav < len(self.found_matches_for_nav):
+            start_pos, end_pos = self.found_matches_for_nav[self.current_match_index_for_nav]
 
-        # Check if current selection matches find_what criteria
-        # This is important because "Replace" should only act on a found and selected item
-        try:
-            selected_text = text_area.get(tk.SEL_FIRST, tk.SEL_LAST)
-            # We need to verify if this selected_text actually matches find_what with current options
-            # This is a bit complex. A simpler way: if there's a selection, replace it, then find next.
-            # If no selection, find next, then if found, replace it.
+            # Ensure the text at these positions still matches the find_what criteria
+            # This is a safety check, as text could have been modified elsewhere.
+            # For simplicity, we'll trust our stored match for now.
+            # A more robust solution would re-verify.
 
-            sel_first = text_area.index(tk.SEL_FIRST)
-            sel_last = text_area.index(tk.SEL_LAST)
+            text_area.delete(start_pos, end_pos)
+            text_area.insert(start_pos, replace_with)
 
-            # Verify if the selected text matches 'find_what' according to current settings.
-            # This is tricky. For now, assume if there's a selection, it's the one to replace.
-            # A more robust way would be to re-search from sel_first for length of sel_last-sel_first
-            # to confirm it's a valid match.
+            # After replacement, highlights are invalid. Refresh them.
+            # The <<Modified>> event on text_area will trigger EditorTab's clear_search_highlight_tags.
+            # We then need to re-scan and re-highlight.
+            # The on_text_changed_tab_and_update_lines in EditorTab calls self.app.update_status_bar()
+            # and self.clear_search_highlight_tags().
+            # We need to ensure refresh_search_highlights() is called after modification.
 
-            if sel_first and sel_last: # If there is a selection
-                 # Check if the selected text actually matches 'find_what' with current options.
-                 # This is a simplification. A proper check would involve re-evaluating the match.
-                 # For instance, if user changes "Case Sensitive" *after* a find, current selection might no longer be valid.
-                 # For now, we assume the selection is valid if it exists.
-                text_area.delete(sel_first, sel_last)
-                text_area.insert(sel_first, replace_with)
-                text_area.mark_set(tk.INSERT, f"{sel_first} + {len(replace_with)} chars")
-                text_area.tag_remove(tk.SEL, "1.0", tk.END) # Clear selection after replace
-                text_area.event_generate("<<Modified>>")
-                self.find_next() # Automatically find the next occurrence
-            else: # No selection, just do a "Find Next"
-                self.find_next()
-                # If find_next successfully selected something, now we can replace it.
-                # This requires find_next to signal success or for us to check selection.
-                # This makes replace_once coupled with find_next's state.
-                # Alternative: find_next, then if found, replace.
-                # Let's try: if find_next() results in a selection, then replace.
-                # The current find_next already selects. So if after find_next() there's a selection, replace it.
-                # This means "Replace" button effectively means "Replace current selection if valid, then Find Next"
-                # OR "Find Next, then if found, replace *that*".
-                # The common UX is: "Replace" acts on current selection if it's a find match, then finds next.
-                # If no selection, or selection is not a find match, it does "Find Next". If that finds something,
-                # the item is selected, and a *second* click on "Replace" would replace it.
-                # Let's stick to: if selection exists and is a "valid" find, replace it and find next.
-                # For now, if selection exists, it's replaced.
-                pass
+            # Manually trigger a refresh of highlights and then find the next logical item.
+            # The current_match_index_for_nav will be reset by refresh_search_highlights
+            # if called via on_find_settings_changed.
+            # Here, we need to carefully set it up for the next find.
 
+            # Let's simplify: after replace, text is modified.
+            # <<Modified>> -> EditorTab.on_text_changed_tab_and_update_lines -> EditorTab.clear_search_highlight_tags
+            # This means all yellow/orange highlights are gone.
+            # Now, call find_next. find_next should re-trigger refresh_search_highlights if needed.
 
-        except tk.TclError: # No selection
-            self.find_next() # Find the first instance, it will be selected. User can then click Replace again.
+            # To ensure find_next re-evaluates, we can mark highlights as dirty
+            # self.find_dialog_search_dirty_flag = True
+            # However, `on_find_settings_changed` already calls `refresh_search_highlights`.
+            # The text modification itself will clear highlights in the tab.
+            # The next call to find_next will then use the (now empty) self.found_matches_for_nav
+            # or it will re-trigger refresh_search_highlights if find_what_var changes (it doesn't here).
+            # This needs to be robust.
+
+            # Simplest: after replace, explicitly refresh and then find next.
+            cursor_after_replace = text_area.index(f"{start_pos} + {len(replace_with)} chars")
+            text_area.mark_set(tk.INSERT, cursor_after_replace) # Move cursor after replaced text
+
+            self.refresh_search_highlights() # Re-scan and highlight all based on current text
+
+            # Now, find the next occurrence from the current cursor position.
+            # We need to set current_match_index_for_nav appropriately so find_next picks the correct one.
+            new_idx = 0
+            found_after_replace = False
+            for i, (start, end) in enumerate(self.found_matches_for_nav):
+                if text_area.compare(start, ">=", cursor_after_replace):
+                    new_idx = i
+                    found_after_replace = True
+                    break
+            if not found_after_replace and self.found_matches_for_nav: # Wrapped or no more matches after this point
+                new_idx = 0 # Go to first if wrap is on for find_next (or handle as find_next does)
+
+            self.current_match_index_for_nav = new_idx -1 # So find_next (forward) will pick it up
+            self.find_next()
+
+        else: # No current selection to replace, just try to find the next one
+            self.find_next()
 
         if self.find_replace_dialog and self.find_replace_dialog.winfo_exists():
              self.find_replace_dialog.lift()
@@ -1208,6 +1289,81 @@ class TextEditor:
              self.find_replace_dialog.lift()
         return "break"
 
+    def clear_all_search_highlights_active_tab(self):
+        current_tab = self.get_current_tab()
+        if current_tab:
+            current_tab.clear_search_highlight_tags() # This clears both general and current
+
+    def clear_current_search_highlight_active_tab(self):
+        current_tab = self.get_current_tab()
+        if current_tab:
+            current_tab.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+            # Do not clear tk.SEL here as user might be selecting text for other purposes
+
+
+    def refresh_search_highlights(self):
+        active_tab = self.get_current_tab()
+        if not active_tab:
+            self.found_matches_for_nav = []
+            return
+
+        text_area = active_tab.text_area
+        text_area.tag_remove("search_highlight", "1.0", tk.END)
+        text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+        # Keep tk.SEL if user had something selected. Find will make its own selection.
+
+        find_what = self.find_what_var.get()
+        if not find_what:
+            self.found_matches_for_nav = []
+            return
+
+        case_sensitive = self.case_sensitive_find_var.get()
+        whole_word = self.whole_word_var.get()
+        use_regex = self.regex_var.get()
+
+        matches = []
+        start_index = "1.0"
+        while True:
+            pos, length = self._search_in_text(text_area, find_what, start_index, tk.END,
+                                               case_sensitive, whole_word, use_regex, False)
+            if pos:
+                end_pos = text_area.index(f"{pos} + {length} chars")
+                text_area.tag_add("search_highlight", pos, end_pos)
+                matches.append((pos, end_pos))
+                start_index = end_pos
+            else:
+                break
+
+        self.found_matches_for_nav = matches
+        # self.current_match_index_for_nav = -1 # Reset by on_find_settings_changed or before find_next
+        return # matches are stored in self.found_matches_for_nav
+
+    def navigate_to_match(self, match_index, is_initial_find=False):
+        text_area = self.get_active_text_area()
+        if not text_area or not self.found_matches_for_nav or not (0 <= match_index < len(self.found_matches_for_nav)):
+            if is_initial_find and self.found_matches_for_nav: # cycle if initial find lands out of bounds
+                 pass # let find_next handle wrap around message
+            else:
+                return
+
+        text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+
+        start_pos, end_pos = self.found_matches_for_nav[match_index]
+
+        text_area.tag_add("current_search_highlight", start_pos, end_pos)
+        text_area.tag_remove("search_highlight", start_pos, end_pos) # So current is distinct
+
+        text_area.tag_remove(tk.SEL, "1.0", tk.END) # Clear old selection
+        text_area.tag_add(tk.SEL, start_pos, end_pos)
+
+        # For cursor position: if searching backwards, cursor at start of selection, else at end.
+        # This is for subsequent typing or navigation.
+        cursor_nav_pos = start_pos if self.search_backwards_var.get() and not is_initial_find else end_pos
+        text_area.mark_set(tk.INSERT, cursor_nav_pos)
+        text_area.see(start_pos) # Scroll to see the beginning of the match
+        self.current_match_index_for_nav = match_index
+
+
     # --- Font Dialog Methods ---
     def open_font_dialog(self):
         if hasattr(self, "font_dialog") and self.font_dialog.winfo_exists():
@@ -1227,7 +1383,34 @@ class TextEditor:
         font_bold_var = tk.BooleanVar(value=(self.current_font_weight == "bold"))
         font_italic_var = tk.BooleanVar(value=(self.current_font_slant == "italic"))
 
-        available_families = sorted(list(set(tkfont.families())))
+        all_families = sorted(list(set(tkfont.families())))
+        mono_keywords = ["mono", "fixed", "console", "terminal", "courier", "typewriter", "operator", "code"]
+
+        preferred_families = []
+        other_families = []
+
+        if "TkFixedFont" not in all_families: # Ensure TkFixedFont is an option
+            if "TkFixedFont" not in preferred_families: # Should not happen if all_families doesn't have it
+                 preferred_families.append("TkFixedFont")
+
+        for family in all_families:
+            is_preferred = False
+            if family == "TkFixedFont" and family not in preferred_families:
+                 preferred_families.append(family)
+                 is_preferred = True
+            else:
+                for keyword in mono_keywords:
+                    if keyword.lower() in family.lower():
+                        if family not in preferred_families:
+                            preferred_families.append(family)
+                        is_preferred = True
+                        break
+            if not is_preferred:
+                other_families.append(family)
+
+        # Combine lists, preferred first. Still sorted within their groups.
+        available_families = preferred_families + other_families
+
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(expand=True, fill=tk.BOTH)
@@ -1321,6 +1504,7 @@ class TextEditor:
         for tab in self.tabs:
             tab.text_area.config(font=self.editor_font)
             tab.line_numbers_font.config(**new_line_number_font_config)
+            tab.text_area.update_idletasks() # Ensure text area layout is updated
             tab.redraw_line_numbers()
 
 
