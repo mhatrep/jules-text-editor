@@ -339,10 +339,33 @@ class TextEditor:
         self.tabs = []
 
         # Default font configuration
-        self.current_font_family = "TkFixedFont" # Default fixed-width font
+        self.known_fixed_fonts = sorted([
+            "TkFixedFont", "Courier New", "Courier", "Consolas", "DejaVu Sans Mono",
+            "Liberation Mono", "Menlo", "Monaco", "Source Code Pro", "Fira Code",
+            "Inconsolata", "Fixedsys", "Terminal", "Monospace"
+        ]) # Sorted for consistent fallback behavior if needed
+
+        system_fonts = tkfont.families()
+
+        # Determine a suitable default fixed-width font
+        default_family_to_set = "TkFixedFont" # Ultimate fallback
+        if "TkFixedFont" in system_fonts:
+            default_family_to_set = "TkFixedFont"
+        else: # Try others from our known list
+            for ff in self.known_fixed_fonts:
+                if ff == "TkFixedFont": continue # Already checked
+                if ff in system_fonts:
+                    default_family_to_set = ff
+                    break
+            # If still no match, default_family_to_set remains "TkFixedFont" (tk will use a fallback)
+            # or could be the first font from system_fonts if absolutely nothing else.
+            # For now, relying on Tk's fallback for TkFixedFont if it's not "real".
+
+        self.current_font_family = default_family_to_set
         self.current_font_size = 10
         self.current_font_weight = "normal"
         self.current_font_slant = "roman"
+
         self.editor_font = tkfont.Font(
             family=self.current_font_family,
             size=self.current_font_size,
@@ -447,6 +470,26 @@ class TextEditor:
 
         self.format_menu.add_separator()
         self.format_menu.add_command(label="Sort Lines...", command=self.sort_lines_dialog)
+
+        self.format_menu.add_separator()
+
+        # Line Spacing Sub-menu
+        self.line_spacing_menu = tk.Menu(self.format_menu, tearoff=0)
+        self.format_menu.add_cascade(label="Line Spacing", menu=self.line_spacing_menu)
+        self.line_spacing_menu.add_command(label="Double Space Lines", command=self.double_space_lines)
+        self.line_spacing_menu.add_command(label="Reduce Multiple Blank Lines to One", command=self.reduce_blank_lines)
+        self.line_spacing_menu.add_command(label="Remove All Blank Lines", command=self.remove_all_blank_lines)
+        # Future items:
+        # self.line_spacing_menu.add_command(label="Triple Space Lines", command=self.triple_space_lines)
+
+
+        # Line Alteration Sub-menu
+        self.line_alteration_menu = tk.Menu(self.format_menu, tearoff=0)
+        self.format_menu.add_cascade(label="Line Alteration", menu=self.line_alteration_menu)
+        # Future items:
+        self.line_alteration_menu.add_command(label="Delete Duplicate Consecutive Lines", command=self.delete_duplicate_consecutive_lines)
+        self.line_alteration_menu.add_command(label="Reverse Lines", command=self.reverse_lines_action)
+
 
         # Search Menu (for Find/Replace)
         self.search_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -1444,46 +1487,50 @@ class TextEditor:
         font_bold_var = tk.BooleanVar(value=(self.current_font_weight == "bold"))
         font_italic_var = tk.BooleanVar(value=(self.current_font_slant == "italic"))
 
-        all_families = sorted(list(set(tkfont.families())))
-        mono_keywords = ["mono", "fixed", "console", "terminal", "courier", "typewriter", "operator", "code"]
+        system_families = set(tkfont.families()) # Use a set for efficient lookup
 
-        preferred_families = []
-        other_families = []
+        # Filter system fonts against our known fixed-width list
+        # and ensure they are actually available on the system.
+        available_fixed_fonts = [font for font in self.known_fixed_fonts if font in system_families]
 
-        if "TkFixedFont" not in all_families: # Ensure TkFixedFont is an option
-            if "TkFixedFont" not in preferred_families: # Should not happen if all_families doesn't have it
-                 preferred_families.append("TkFixedFont")
+        if not available_fixed_fonts:
+            # Fallback strategy if no known fixed fonts are found
+            # This is unlikely if TkFixedFont or Courier are standard Tk fallbacks
+            if "TkFixedFont" in system_families:
+                available_fixed_fonts = ["TkFixedFont"]
+            elif "Courier" in system_families: # A very common fallback
+                available_fixed_fonts = ["Courier"]
+            else: # Last resort: show all system fonts, though not ideal for a code editor
+                available_fixed_fonts = sorted(list(system_families))
+                if not available_fixed_fonts: # Extremely unlikely (no fonts on system?)
+                    available_fixed_fonts = ["TkFixedFont"] # Default to this, Tk might provide a very basic one
 
-        for family in all_families:
-            is_preferred = False
-            if family == "TkFixedFont" and family not in preferred_families:
-                 preferred_families.append(family)
-                 is_preferred = True
-            else:
-                for keyword in mono_keywords:
-                    if keyword.lower() in family.lower():
-                        if family not in preferred_families:
-                            preferred_families.append(family)
-                        is_preferred = True
-                        break
-            if not is_preferred:
-                other_families.append(family)
-
-        # Combine lists, preferred first. Still sorted within their groups.
-        available_families = preferred_families + other_families
+        # Ensure current font is in the list if possible, or select first available
+        current_family_in_list = self.current_font_family
+        if self.current_font_family not in available_fixed_fonts:
+            if available_fixed_fonts:
+                current_family_in_list = available_fixed_fonts[0]
+            # If available_fixed_fonts is empty, it will use current_font_family which defaults to TkFixedFont
+        font_family_var.set(current_family_in_list)
 
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(expand=True, fill=tk.BOTH)
 
         ttk.Label(main_frame, text="Font Family:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        family_combobox = ttk.Combobox(main_frame, textvariable=font_family_var, values=available_families, state="readonly", width=30)
+        # Use available_fixed_fonts for the combobox values
+        family_combobox = ttk.Combobox(main_frame, textvariable=font_family_var, values=available_fixed_fonts, state="readonly", width=30)
         family_combobox.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=2)
-        try:
-            family_combobox.set(self.current_font_family)
-        except tk.TclError:
-            if available_families:
-                font_family_var.set(available_families[0])
+        # font_family_var is already set to current_family_in_list, which is in available_fixed_fonts (or a fallback)
+        # So, direct setting of combobox via .set() might be redundant if textvariable works as expected.
+        # However, explicitly setting it ensures the displayed value matches the variable.
+        if current_family_in_list in available_fixed_fonts:
+             family_combobox.set(current_family_in_list)
+        elif available_fixed_fonts: # Fallback if current somehow not in list but list has items
+             family_combobox.set(available_fixed_fonts[0])
+        # If available_fixed_fonts is empty, it implies a very basic system,
+        # font_family_var would hold "TkFixedFont" or "Courier", and combobox would be empty or have that if it was added.
+        # This state should be rare.
 
         ttk.Label(main_frame, text="Font Size:").grid(row=1, column=0, sticky=tk.W, pady=2)
         size_spinbox = ttk.Spinbox(main_frame, from_=8, to=72, textvariable=font_size_var, width=5)
@@ -1704,6 +1751,248 @@ class TextEditor:
         for tab in self.tabs:
             # Pass the entire settings dict to the tab method
             tab.apply_keyword_highlights(self.keyword_highlight_settings)
+
+    # --- Sed-Inspired Text Operations ---
+
+    def double_space_lines(self):
+        """Inserts a blank line after each line in selection or full text."""
+        def do_double_space(text):
+            if not text: # Handle empty string case
+                return ""
+            lines = text.splitlines(keepends=False) # Don't keep ends, we'll add them
+            # If the original text ended with a newline, the last line in lines will be empty if text was "a\n\b\n" -> ["a","b",""]
+            # or the last line will be the content if text was "a\nb" -> ["a","b"]
+            # We want to preserve whether the original block ended with a newline.
+            original_ends_with_newline = text.endswith('\n')
+
+            processed_lines = []
+            for i, line_content in enumerate(lines):
+                processed_lines.append(line_content)
+                # Add a blank line after every line, except potentially after the very last line
+                # if the original text didn't end with a newline AND it was the actual last line of content.
+                if i < len(lines) - 1: # If not the last item from splitlines
+                    processed_lines.append("") # Add the blank line
+                elif original_ends_with_newline : # It is the last item, check if original ended with newline
+                     processed_lines.append("")
+
+
+            # Join with \n. This will add \n after every item.
+            # If original_ends_with_newline is false, and last line had content, we don't want an extra \n at end of all.
+            result = "\n".join(processed_lines)
+
+            # If original did not end with newline, and result now does (because last processed_line was empty string from append)
+            # and the original last line from splitlines was not empty.
+            if not original_ends_with_newline and result.endswith('\n') and lines and lines[-1] != "":
+                # This case is tricky. If original was "a\nb", lines=["a","b"]. processed_lines=["a","", "b"]. join-> "a\n\nb". Correct.
+                # If original was "a", lines=["a"]. processed_lines=["a"]. join -> "a". Correct.
+                # If original was "a\n", lines=["a",""]. processed_lines=["a","",""]. join -> "a\n\n". Correct.
+                pass # Logic seems to handle this pass.
+
+            # A simpler reconstruction:
+            new_text = ""
+            for i, line_content in enumerate(lines):
+                new_text += line_content + "\n" # Add the line itself
+                if i == len(lines) -1 and not original_ends_with_newline:
+                    # This was the actual last line of content and original didn't have a newline after it
+                    # So, we added one, but we shouldn't add another for double spacing.
+                    pass
+                else: # Add the blank line for double spacing
+                    new_text += "\n"
+
+            # The above simpler one adds an extra newline at the very end if original_ends_with_newline was true.
+            # Let's use sed G logic: append \n then the new line.
+            # sed G appends a newline, then the content of hold space (which is also a newline by default after G)
+            # Effectively, it appends '\n\n' to each line if hold space is empty, or rather, it appends a newline.
+            # No, sed G appends a newline character, then the contents of the hold space.
+            # If hold space is empty, it effectively adds a newline.
+            # A simple G on its own makes each line followed by one blank line.
+
+            final_lines = []
+            for line in text.splitlines(keepends=True): # Keep original line endings
+                final_lines.append(line)
+                if line.endswith('\n'):
+                    final_lines.append('\n') # Add a blank line
+                else: # Line didn't end with \n (it's the last line of file without trailing \n)
+                    final_lines.append('\n\n') # Add \n then the blank line \n
+
+            # Correction for last line if it didn't have newline initially
+            if not text.endswith('\n') and final_lines:
+                # The last element would be '\n\n' from the else block. We want it to be just '\n'
+                # if the original last line was, say, "foo" (no newline) -> becomes "foo\n\n". Should be "foo\n".
+                # This is tricky. Let's re-think.
+                # Each line in the input should be followed by one additional newline.
+
+                result_parts = []
+                input_lines = text.splitlines(keepends=True)
+                for i, line in enumerate(input_lines):
+                    result_parts.append(line)
+                    if line.endswith('\n'): # It's a normal line
+                        result_parts.append('\n') # This is the double-spacing newline
+                    elif i == len(input_lines) - 1: # Last line, and it doesn't end with \n
+                        result_parts.append('\n') # Add a newline to it, then the double-space newline
+                        result_parts.append('\n')
+
+                # This logic might still add too many newlines at the end if the file already ends with multiple.
+                # The simplest is: for each line, output it, then output a blank line.
+                # Preserve original line endings.
+
+                # Best approach:
+                # 1. Split lines, keeping original endings.
+                # 2. For each line, add it to output.
+                # 3. Add an extra newline to output.
+                # 4. Rejoin. This will naturally handle the end of file.
+
+                split_lines = text.splitlines(keepends=True)
+                if not split_lines: return "" # Empty input
+
+                processed_text = []
+                for line in split_lines:
+                    processed_text.append(line)
+                    processed_text.append("\n") # The double-spacing blank line
+
+                # If the original text did NOT end with a newline, the last line added by us
+                # (the double-spacing one) might be too much.
+                # Example: "foo" -> splitlines(keepends=True) -> ["foo"]
+                # processed_text -> ["foo", "\n"] -> join -> "foo\n" (This is single spaced)
+                # It should be "foo\n\n" if we consider "foo" as a line.
+                # No, sed G on "foo" (no newline) outputs "foo\n\n"
+                # sed G on "foo\n" outputs "foo\n\n"
+                # So, each logical line gets an extra \n.
+
+                # Let's use the definition: after every original line, insert one blank line.
+                # A blank line is effectively "\n".
+                # So, if line is "content\n", it becomes "content\n\n".
+                # If line is "content" (EOF), it becomes "content\n\n".
+
+                output_lines = []
+                for line in text.splitlines(keepends=False): # Process content only
+                    output_lines.append(line)
+                    output_lines.append("") # The blank line
+
+                # If original text was empty or just newlines, handle that.
+                if not text.strip(): # If text was all whitespace/empty
+                    if text.count('\n') == 0 and len(text) > 0: # e.g. "   "
+                        return text + "\n\n" # "   \n\n"
+                    if text == "": return "\n" # Double spacing "" is one blank line? sed G on empty input is "\n"
+                                            # No, sed G on empty input is one blank line.
+                                            # If input is empty, result is empty. If input is "\n", result is "\n\n".
+
+                    # For now, if input is all whitespace, let's just double space its newlines
+                    # This general loop will handle it if we join by \n.
+                    # If text = "\n", lines = ["", ""]. output_lines = ["", "", "", ""]. join -> "\n\n\n". Wrong. Should be "\n\n"
+                    # If text = "a\n", lines = ["a", ""]. output_lines = ["a", "", "", ""]. join -> "a\n\n\n". Wrong. Should be "a\n\n".
+
+                # Final attempt at simple logic for do_double_space
+                if not text: return ""
+                return '\n\n'.join(text.splitlines(keepends=False)) + ('\n\n' if text.endswith('\n') and text.strip() else ('\n' if text.endswith('\n') else '\n\n' if text else ''))
+                # This is getting too complex.
+                # The sed 'G' command is simple: it appends a newline then the content of hold space.
+                # If hold space is empty (default after a line read unless 'h' was used), it just appends a newline.
+                # So, every line gets an extra newline.
+
+                result = []
+                for line in text.splitlines(keepends=True):
+                    result.append(line)
+                    if not line.endswith('\n'): # If it's the last line without a newline
+                        result.append('\n') # Add one for itself
+                    result.append('\n') # Add the double-spacing newline
+
+                # If original text was empty, result should be empty.
+                if not text: return ""
+                # If original text was just "foo" (no newline), result should be "foo\n\n"
+                # Current logic: line="foo", result.append("foo"), result.append("\n"), result.append("\n") -> "foo\n\n" Correct.
+                # If original text was "foo\n", result.append("foo\n"), result.append("\n") -> "foo\n\n" Correct.
+                # If original was "\n" (one blank line), line="\n", result.append("\n"), result.append("\n") -> "\n\n". Correct.
+
+                return "".join(result)
+
+        self._process_text(do_double_space)
+
+    def reduce_blank_lines(self):
+        """Reduces multiple consecutive blank lines to a single blank line.
+           Also removes leading/trailing blank lines from the processed block."""
+        def do_reduce(text):
+            if not text.strip(): # Empty or all whitespace
+                return ""
+
+            # Normalize line endings for processing
+            text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+            # Strip leading and trailing whitespace from the entire block first.
+            # This handles blank lines at the very start/end of the selection/document.
+            stripped_text = text.strip()
+            if not stripped_text: # If stripping made it empty
+                return ""
+
+            # Replace sequences of 2 or more newlines (potentially with whitespace lines between)
+            # with just two newlines (which forms one blank line).
+            # This regex finds a newline, followed by any number of whitespace-only lines also ending in newlines,
+            # and replaces that whole sequence with a single blank line (\n\n).
+            # To be more precise for "max one blank line":
+            # A line with content, then \n, then \n (blank line), then line with content.
+            # We want to turn \n\n\n (2 blank lines) into \n\n (1 blank line).
+            # So, \n(\s*\n)+ should become \n\n
+
+            import re
+            # Replace 3 or more newlines with 2 newlines
+            processed_text = re.sub(r'\n{3,}', '\n\n', stripped_text)
+
+            # Ensure the result ends with a single newline if it has content.
+            if processed_text:
+                processed_text += '\n'
+            return processed_text
+
+        self._process_text(do_reduce)
+
+    def remove_all_blank_lines(self):
+        """Removes all lines that are blank or contain only whitespace."""
+        def do_remove_all_blanks(text):
+            lines = text.splitlines()
+            non_blank_lines = [line for line in lines if line.strip()]
+            if not non_blank_lines:
+                return ""
+
+            processed_text = "\n".join(non_blank_lines)
+            # Ensure a single trailing newline if there's content
+            if processed_text:
+                processed_text += '\n'
+            return processed_text
+
+        self._process_text(do_remove_all_blanks)
+
+    def delete_duplicate_consecutive_lines(self):
+        """Deletes duplicate consecutive lines from selection or full text."""
+        def do_uniq(text):
+            if not text: return ""
+            # Split lines, but handle if the text ends with a newline properly for restoration
+            original_ends_with_newline = text.endswith('\n')
+            lines = text.splitlines(keepends=False)
+
+            if not lines: # Only newlines or empty
+                return text # Return original (e.g. "\n\n" or "")
+
+            output_lines = [lines[0]]
+            for i in range(1, len(lines)):
+                if lines[i] != lines[i-1]:
+                    output_lines.append(lines[i])
+
+            processed_text = "\n".join(output_lines)
+
+            # Restore trailing newline if original had it and output is not empty
+            if original_ends_with_newline and processed_text:
+                processed_text += '\n'
+            # If original did not have it, but .join added one (e.g. single line input)
+            # and the single line was not empty.
+            elif not original_ends_with_newline and processed_text.endswith('\n') and len(output_lines) == 1 and output_lines[0]:
+                 processed_text = processed_text.rstrip('\n')
+
+            return processed_text
+        self._process_text(do_uniq)
+
+    def reverse_lines_action(self):
+        """Reverses the order of lines in selection or full text."""
+        # This simply calls the existing sort logic with the "reverse" type.
+        self.apply_sort_lines(sort_type="reverse", case_sensitive=False, remove_duplicates=False)
 
 
 if __name__ == "__main__":
