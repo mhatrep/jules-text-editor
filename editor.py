@@ -1037,126 +1037,38 @@ class TextEditor:
 
     def _search_in_text(self, text_widget, pattern, start_index, end_index, case_sensitive, whole_word, regex, backwards):
         nocase = not case_sensitive
+        count_var = tk.IntVar() # Used by text_widget.search
 
         if regex:
-            # For regex, whole_word needs to be part of the pattern if desired
-            # Tk's text.search does not directly support whole word for regex.
-            # We might need to use Python's re module and then map positions.
-            # For now, basic regex support without explicit whole word from checkbox.
-            # User can include \b in regex for whole word.
-            import re
-            flags = 0 if case_sensitive else re.IGNORECASE
-
-            content = text_widget.get(start_index, end_index)
-
-            if backwards:
-                # Search backwards: find all matches and take the last one before start_index
-                # This is complex with Python's re. finditer and then filter
-                matches = []
-                # Adjust start_index for content slicing if it's from text_widget.index
-                # The content is from start_index to end_index.
-                # We need to map re match positions back to text_widget indices.
-
-                # This simplified version for regex backwards is not implemented here.
-                # Tk's -backwards is better for non-regex.
-                # For regex backwards, one would typically search forward in reversed text or iterate.
-                # Let's rely on tk's search for non-regex backwards and python's re for forward.
-                # For now, regex backwards is not fully supported with python re here.
-                # Tk's own regex might be better if it supports backwards.
-                # Let's assume forward search for regex for now.
-                if backwards:
-                     # messagebox.showinfo("Info", "Regex backward search not fully implemented with Python re yet. Using Tk's search if possible.")
-                     # Fallback to Tk's search if it supports regex and backwards.
-                     # count_var = tk.IntVar()
-                     # pos = text_widget.search(pattern, start_index, backwards=True, regexp=True, nocase=nocase, exact=whole_word, stopindex=end_index, count=count_var)
-                     # if pos: return pos, count_var.get() else: return None, 0
-                     # For now, let's just say it's not supported with python re
-                     pass
-
-
-            match_iter = re.finditer(pattern, content, flags)
-
-            if backwards: # Iterate all and find the last one whose start is before current cursor
-                last_match = None
-                current_offset = text_widget.count("1.0", start_index)[0] # Number of chars from 1.0 to start_index
-
-                # Iterate through all matches in the relevant portion of the text
-                # The content is sliced from search_start to search_end.
-                # We need to search within this slice and map indices.
-
-                # Let's simplify: for regex, backwards is hard.
-                # We'll search from 1.0 up to the start_index and take the last match.
-                if start_index != "1.0": # only if not at the beginning
-                    content_before_start = text_widget.get("1.0", start_index)
-                    for m in re.finditer(pattern, content_before_start, flags):
-                        last_match = m
-                if last_match:
-                    # Map match object start/end in content_before_start back to main text_widget indices
-                    match_start_offset = last_match.start()
-                    match_end_offset = last_match.end()
-                    # This needs careful index calculation using text_widget.index(f"1.0 + {offset} chars")
-                    # For simplicity, this part is not fully robust for regex backwards.
-                    # Using tk's search is preferred if its regex is sufficient.
-                    # For now, this path will likely not be hit or be perfect.
-                    # Let's focus on forward search for regex.
-                    # A truly robust regex backward would search forward in segments.
-                    pass # Placeholder for complex regex backward logic
-
-
-            # Forward regex search:
-            for m in match_iter:
-                # Map m.start() and m.end() from `content` string to text_widget indices
-                # `content` was obtained from `start_index` to `end_index`
-                # A match at m.start() in `content` is at `start_index + m.start() characters`
-                # This needs `text_widget.index(f"{start_index} + {m.start()} chars")`
-                # and `text_widget.index(f"{start_index} + {m.end()} chars")`
-
-                # Simplified approach: search entire document and find first match after start_index
-                # This is inefficient for large docs if start_index is far.
-                # A better way is to get content from start_index to end and search in that.
-
-                # Let's use the content sliced from start_index:
-                match_pos_in_slice = m.start()
-                # Convert this to an absolute position in the text widget
-                # pos = text_widget.index(f"{start_index} + {match_pos_in_slice} chars")
-                # length = m.end() - m.start()
-                # return pos, length
-
-                # More direct: search from start_index in the whole document, take first match
-                # Python's re.search finds the *first* occurrence.
-                # If start_index is 'insert', we search from there.
-                doc_content = text_widget.get("1.0", tk.END)
-                offset_at_start_index = 0
-                if start_index != "1.0":
-                    offset_at_start_index = len(text_widget.get("1.0", start_index))
-
-                m_full = re.search(pattern, doc_content[offset_at_start_index:], flags)
-                if m_full:
-                    abs_match_start = offset_at_start_index + m_full.start()
-                    pos = text_widget.index(f"1.0 + {abs_match_start} chars")
-                    length = len(m_full.group(0))
-                    return pos, length
-                return None, 0 # No match found after start_index
-            return None, 0 # No matches from iterator
-
-        else: # Not regex - use Tk's text.search
-            count_var = tk.IntVar()
-            # Adjust start_index for backwards search if it's at the beginning of a selection
-            # to ensure the selection itself can be found again if "Find Next" is pressed repeatedly.
-            current_sel = text_widget.tag_ranges(tk.SEL)
-            if backwards and current_sel and start_index == current_sel[0]:
-                 effective_start = start_index # Search from beginning of current selection
-            elif backwards:
-                 effective_start = start_index
-            else: # Forward
-                 effective_start = start_index
-
-            pos = text_widget.search(pattern, effective_start,
+            # When regex is True, 'whole_word' (exact) is typically handled by \b within the regex pattern itself.
+            # Forcing 'exact=False' when regex=True to avoid conflicts or unexpected behavior.
+            # The user should construct their regex to include whole word boundaries if needed.
+            try:
+                pos = text_widget.search(pattern, start_index,
+                                         stopindex=end_index,
+                                         backwards=backwards,
+                                         regexp=True,
+                                         nocase=nocase,
+                                         exact=False, # Explicitly False when regex is True
+                                         count=count_var)
+                if pos:
+                    return pos, count_var.get()
+                return None, 0
+            except tk.TclError as e:
+                # Check if find_replace_dialog exists and is visible before using as parent
+                parent_dialog = self.root
+                if hasattr(self, "find_replace_dialog") and self.find_replace_dialog and self.find_replace_dialog.winfo_exists():
+                    parent_dialog = self.find_replace_dialog
+                messagebox.showerror("Regex Error", f"Invalid regular expression: {e}", parent=parent_dialog)
+                self.clear_all_search_highlights_active_tab() # Clear highlights on regex error
+                return None, 0
+        else: # Not regex
+            pos = text_widget.search(pattern, start_index,
                                      stopindex=end_index,
                                      backwards=backwards,
-                                     regexp=regex, # Should be False here
+                                     regexp=False,
                                      nocase=nocase,
-                                     exact=whole_word,
+                                     exact=whole_word, # 'exact' is for non-regex search
                                      count=count_var)
             if pos:
                 return pos, count_var.get()
