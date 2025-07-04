@@ -40,6 +40,20 @@ class EditorTab:
         # For managing debounced keyword highlighting
         self._keyword_highlight_after_id = None
 
+        # For managing debounced syntax highlighting
+        self._syntax_highlight_after_id = None
+        self.current_language_name = None
+        self._syntax_highlight_after_id = None
+
+        # Syntax highlighting tags
+        self.text_area.tag_configure("hl_keyword", foreground="#0000FF")  # Blue
+        self.text_area.tag_configure("hl_comment", foreground="#008000")  # Green
+        self.text_area.tag_configure("hl_string", foreground="#A52A2A")   # Brown/SaddleBrown
+        self.text_area.tag_configure("hl_number", foreground="#FF00FF")  # Magenta
+        self.text_area.tag_configure("hl_operator", foreground="#FF8C00") # DarkOrange
+        self.text_area.tag_configure("hl_builtin", foreground="#20B2AA")  # LightSeaGreen
+        # Add more tags as needed for other token types
+
 
         # Custom scrollbar that calls our sync method
         self.scrollbar = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.text_area.yview)
@@ -57,6 +71,8 @@ class EditorTab:
 
         # Apply initial keyword highlighting if any are set globally
         self.apply_keyword_highlights(self.app.keyword_highlight_settings)
+        # Detect and apply syntax highlighting based on initial file_path
+        self._detect_and_set_language(self.current_file)
 
 
     def load_file_content(self, filepath):
@@ -65,10 +81,11 @@ class EditorTab:
                 content = f.read()
             self.text_area.delete("1.0", tk.END)
             self.text_area.insert(tk.END, content)
-            self.current_file = filepath
+            self.current_file = filepath # Set current_file before detecting language
             self.text_changed = False
             self.text_area.edit_modified(False)
             self.update_tab_title()
+            self._detect_and_set_language(self.current_file) # Detect language for newly loaded file
             self.apply_keyword_highlights(self.app.keyword_highlight_settings) # Apply after loading
         except Exception as e:
             messagebox.showerror("Error Opening File", str(e))
@@ -106,6 +123,7 @@ class EditorTab:
             self.app.update_status_bar()
             if str(event.type) == "Modified":
                 self.clear_search_highlight_tags() # Clear find/replace highlights
+
                 # Schedule keyword highlighting update (debounced)
                 if self.app.keyword_highlight_settings.get("active", False):
                     if self._keyword_highlight_after_id:
@@ -113,10 +131,96 @@ class EditorTab:
                     self._keyword_highlight_after_id = self.text_area.after(500,
                         lambda: self.apply_keyword_highlights(self.app.keyword_highlight_settings))
 
+                # Schedule syntax highlighting update (debounced)
+                if self.current_language_name:
+                    if self._syntax_highlight_after_id:
+                        self.text_area.after_cancel(self._syntax_highlight_after_id)
+                    self._syntax_highlight_after_id = self.text_area.after(500, self.apply_syntax_highlighting)
+
 
     def clear_search_highlight_tags(self):
         self.text_area.tag_remove("search_highlight", "1.0", tk.END)
         self.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+
+    def _detect_and_set_language(self, filepath):
+        self.current_language_name = None # Reset before detection
+        # print(f"DEBUG: Tab {self.current_file if self.current_file else 'Untitled'} detecting lang for path: {filepath}")
+
+        if not filepath:
+            self.apply_syntax_highlighting() # Will clear if no lang
+            return
+
+        _, extension = os.path.splitext(filepath)
+        extension = extension.lower()
+
+        if self.app and hasattr(self.app, 'language_definitions'): # Ensure app and definitions exist
+            for lang_name, lang_def in self.app.language_definitions.items():
+                if extension in lang_def.get("extensions", []):
+                    self.current_language_name = lang_name
+                    # print(f"DEBUG: Detected language: {lang_name} for {filepath}")
+                    break
+
+        self.apply_syntax_highlighting()
+
+
+    def _clear_syntax_highlight_tags(self):
+        # Helper to clear all defined syntax highlighting tags
+        # Assumes hl_tags are defined in self.app (TextEditor instance) or passed
+        # For now, let's list them explicitly based on what's configured
+        syntax_tags_to_clear = ["hl_keyword", "hl_comment", "hl_string",
+                                "hl_number", "hl_operator", "hl_builtin"]
+        for tag in syntax_tags_to_clear:
+            try:
+                self.text_area.tag_remove(tag, "1.0", tk.END)
+            except tk.TclError:
+                pass # Tag might not exist or have instances
+
+    def apply_syntax_highlighting(self):
+        if not self.current_language_name or not self.app.language_definitions:
+            return
+
+        lang_def = self.app.language_definitions.get(self.current_language_name)
+        if not lang_def or not lang_def.get("rules"):
+            return
+
+        self._clear_syntax_highlight_tags()
+
+        # Optimization: Disable text widget updates during highlighting for performance
+        # This is not directly possible in Tkinter without complex hacks.
+        # Instead, we rely on debouncing and careful regex.
+
+        all_text = self.text_area.get("1.0", tk.END)
+        if not all_text.strip(): # No content to highlight
+            return
+
+        import re
+
+        for rule in lang_def["rules"]:
+            token_type = rule["token_type"]
+            pattern_str = rule["pattern"]
+
+            try:
+                # Pre-compile regex for slight efficiency if called many times, though finditer does this.
+                # compiled_pattern = re.compile(pattern_str) # Not strictly needed for finditer
+                for match in re.finditer(pattern_str, all_text):
+                    start_offset, end_offset = match.span()
+
+                    # Convert character offsets to Tkinter Text widget indices
+                    # This needs to be robust for multiline text.
+                    # "1.0 + N chars" works across lines.
+                    start_idx = self.text_area.index(f"1.0 + {start_offset} chars")
+                    end_idx = self.text_area.index(f"1.0 + {end_offset} chars")
+
+                    self.text_area.tag_add(token_type, start_idx, end_idx)
+            except re.error as e:
+                print(f"Regex error for language {self.current_language_name}, pattern {pattern_str}: {e}")
+            except tk.TclError as e:
+                # This can happen if indices are invalid, e.g. during rapid text changes
+                # before debouncing kicks in fully or if text length changed mid-iteration.
+                print(f"TclError during syntax highlighting: {e}. Text might have changed.")
+                # It might be safer to break or return if text changes during highlighting.
+                # For now, just print and continue. This should be rare with debouncing.
+                return # Stop highlighting if text area state is unstable
 
     def apply_keyword_highlights(self, highlight_settings):
         # Clear previous user keyword highlights
@@ -431,6 +535,25 @@ class TextEditor:
         ] # Light Salmon, LemonChiffon, LightBlue (custom), PaleTurquoise, Honeydew,
           # MistyRose, LightGoldenrodYellow, LightSkyBlue (alternative), Lavender, LavenderBlush
 
+        # Syntax Highlighting Language Definitions
+        self.language_definitions = {
+            "python": {
+                "extensions": [".py", ".pyw"],
+                # Order matters: Comments and strings usually first
+                "rules": [
+                    {"token_type": "hl_comment", "pattern": r"#.*"},
+                    # More robust string regex: handles escapes, and doesn't break on internal quotes if not matching type
+                    {"token_type": "hl_string", "pattern": r"(\"\"\"(?:[^\"]|\\\"|\n)*?\"\"\"|\'\'\'(?:[^\']|\\\'|\n)*?\'\'\'|\"[^\"\\\n]*(?:\\.[^\"\\\n]*)*\"|\'[^\'\\\n]*(?:\\.[^\'\\\n]*)*\')"},
+                    {"token_type": "hl_keyword", "pattern": r'\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b'},
+                    {"token_type": "hl_builtin", "pattern": r'\b(abs|all|any|ascii|bin|bool|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip|__import__)\b'},
+                    # Numbers: hex, octal, binary, float, int
+                    {"token_type": "hl_number", "pattern": r'\b(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+\.?[0-9]*(?:[eE][+-]?[0-9]+)?|[0-9]+)\b'},
+                    {"token_type": "hl_operator", "pattern": r"(\+|\-|\*|/|%|=|==|!=|>|<|>=|<=|&|\||\^|~|<<|>>|\*\*|//|@)"} # Added @ for decorators
+                ]
+            }
+            # Other language definitions will be added here later
+        }
+
 
         # Create main menu
         self.menu_bar = tk.Menu(self.root)
@@ -620,10 +743,19 @@ class TextEditor:
     def on_tab_changed(self, event=None):
         self.update_app_title()
         self.update_status_bar() # Update status bar when tab changes
+
         current_tab = self.get_current_tab()
-        if current_tab and self.keyword_highlight_settings.get("active", False):
-            # Apply keyword highlighting to newly focused tab
-            current_tab.apply_keyword_highlights(self.keyword_highlight_settings)
+        if current_tab:
+            # Apply keyword highlighting to newly focused tab if active
+            if self.keyword_highlight_settings.get("active", False):
+                current_tab.apply_keyword_highlights(self.keyword_highlight_settings)
+
+            # Apply syntax highlighting to newly focused tab if language is set
+            if current_tab.current_language_name:
+                current_tab.apply_syntax_highlighting()
+            else: # If no language, ensure syntax highlights are cleared (e.g. switching from .py to .txt tab)
+                current_tab._clear_syntax_highlight_tags()
+
 
     def update_status_bar(self):
         current_tab = self.get_current_tab()
@@ -756,10 +888,14 @@ class TextEditor:
         if filepath:
             current_tab.current_file = filepath
             if self.save_file(save_as_if_needed=False): # Call the core save logic
-                # Status bar updated by save_file on success
+                current_tab._detect_and_set_language(filepath) # Re-detect language and highlight
+                # Status bar and app title are updated by save_file and its call to update_tab_title
                 return True
             else:
                 # current_tab.current_file = None # Optionally revert if save failed. Or keep new path.
+                # If save failed, language might still be based on the new (failed) filepath.
+                # This could be reset or left as is. For now, let _detect_and_set_language run.
+                current_tab._detect_and_set_language(filepath)
                 self.update_status_bar() # Reflect potential path change even if save failed
                 return False
         self.update_status_bar() # Reflect that dialog was cancelled or path not chosen
