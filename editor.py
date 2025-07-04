@@ -521,6 +521,7 @@ class TextEditor:
         # Line Spacing Sub-menu
         self.line_spacing_menu = tk.Menu(self.format_menu, tearoff=0)
         self.format_menu.add_cascade(label="Line Spacing", menu=self.line_spacing_menu)
+        self.line_spacing_menu.add_command(label="Condense Internal Whitespace", command=self.condense_internal_whitespace)
         self.line_spacing_menu.add_command(label="Double Space Lines", command=self.double_space_lines)
         self.line_spacing_menu.add_command(label="Reduce Multiple Blank Lines to One", command=self.reduce_blank_lines)
         self.line_spacing_menu.add_command(label="Remove All Blank Lines", command=self.remove_all_blank_lines)
@@ -2046,6 +2047,135 @@ class TextEditor:
         """Reverses the order of lines in selection or full text."""
         # This simply calls the existing sort logic with the "reverse" type.
         self.apply_sort_lines(sort_type="reverse", case_sensitive=False, remove_duplicates=False)
+
+    def _process_selected_lines(self, line_operation_func, preserves_original_endings=True):
+        """Helper to apply a function to each line in a selection or the whole document.
+
+        Args:
+            line_operation_func: A function that takes a single line string (without newline)
+                                 and returns the processed line string (without newline).
+            preserves_original_endings: If True, tries to keep original line endings (\n, \r\n, or none at EOF).
+                                        If False, all processed lines will end with \n (except possibly the last one).
+        """
+        text_area = self.get_active_text_area()
+        if not text_area:
+            return
+
+        try:
+            sel_start_index = text_area.index(tk.SEL_FIRST)
+            sel_end_index = text_area.index(tk.SEL_LAST)
+
+            # If selection ends at the beginning of a line (e.g., user selected full lines),
+            # we don't want to process that empty selection on the new line.
+            if sel_end_index.endswith(".0") and sel_start_index != sel_end_index:
+                sel_end_index = text_area.index(f"{sel_end_index} -1c") # Go to end of previous line
+
+            original_selection_text = text_area.get(sel_start_index, sel_end_index)
+            lines = original_selection_text.splitlines(keepends=True) # Keep endings to analyze them
+
+            if not lines: # Empty selection or selection was just newlines that splitlines removed.
+                 # If original_selection_text was just "\n", lines would be ['\n'].
+                 # If it was "", lines is [].
+                 if original_selection_text: # e.g. "\n"
+                      processed_content = line_operation_func("") # Process an empty line content
+                      if processed_content != "" or original_selection_text != processed_content + (original_selection_text[-1] if original_selection_text.endswith(('\n','\r')) else ''):
+                           text_area.delete(sel_start_index, sel_end_index)
+                           text_area.insert(sel_start_index, processed_content + (original_selection_text[-1] if original_selection_text.endswith(('\n','\r')) else ''))
+                           text_area.event_generate("<<Modified>>")
+                 return
+
+
+            processed_lines = []
+            modified = False
+
+            for line_with_ending in lines:
+                line_ending = ""
+                if preserves_original_endings:
+                    if line_with_ending.endswith("\r\n"):
+                        line_ending = "\r\n"
+                        line_content = line_with_ending[:-2]
+                    elif line_with_ending.endswith("\n"):
+                        line_ending = "\n"
+                        line_content = line_with_ending[:-1]
+                    else: # Last line, no newline
+                        line_content = line_with_ending
+                else: # Normalize all to \n
+                    line_content = line_with_ending.rstrip("\r\n")
+                    line_ending = "\n" # Will add this back unless it's last line and shouldn't have one
+
+                processed_content = line_operation_func(line_content)
+                if processed_content != line_content:
+                    modified = True
+                processed_lines.append(processed_content + line_ending)
+
+            if not preserves_original_endings and processed_lines: # Adjust last line's newline if needed
+                full_new_text_temp = "".join(processed_lines)
+                if not original_selection_text.endswith(('\n', '\r')) and full_new_text_temp.endswith('\n'):
+                    processed_lines[-1] = processed_lines[-1].rstrip('\n') # Remove the normalized \n
+
+            if modified:
+                text_area.delete(sel_start_index, sel_end_index)
+                text_area.insert(sel_start_index, "".join(processed_lines))
+                text_area.event_generate("<<Modified>>")
+
+        except tk.TclError: # No selection, process whole document
+            original_full_text = text_area.get("1.0", tk.END + "-1c") # Exclude Tk's auto-newline
+            lines = original_full_text.splitlines(keepends=True)
+
+            if not lines and original_full_text: # e.g. text is "  " but no newlines
+                lines = [original_full_text]
+
+
+            processed_lines = []
+            modified = False
+            for i, line_with_ending in enumerate(lines):
+                line_ending = ""
+                if preserves_original_endings:
+                    if line_with_ending.endswith("\r\n"):
+                        line_ending = "\r\n"
+                        line_content = line_with_ending[:-2]
+                    elif line_with_ending.endswith("\n"):
+                        line_ending = "\n"
+                        line_content = line_with_ending[:-1]
+                    else: # Last line, no newline
+                        line_content = line_with_ending
+                else: # Normalize all to \n
+                    line_content = line_with_ending.rstrip("\r\n")
+                    line_ending = "\n"
+
+
+                processed_content = line_operation_func(line_content)
+                if processed_content != line_content:
+                    modified = True
+
+                # For full document, if it's the last line and original didn't end with newline,
+                # and we are not preserving original endings (meaning we added one), remove it.
+                if not preserves_original_endings and i == len(lines) -1 and not original_full_text.endswith(('\n','\r')):
+                    processed_lines.append(processed_content) # No line_ending
+                else:
+                    processed_lines.append(processed_content + line_ending)
+
+            if modified:
+                final_text = "".join(processed_lines)
+                # Ensure final text ends with a newline if it's not empty, common editor behavior
+                # This might conflict with preserves_original_endings for the very last line of file.
+                # The loop above tries to handle it.
+
+                text_area.delete("1.0", tk.END)
+                text_area.insert("1.0", final_text)
+                if not final_text.endswith('\n') and final_text: # Add final newline if missing (Tk behavior)
+                    text_area.insert(tk.END, "\n")
+                text_area.event_generate("<<Modified>>")
+
+
+    def condense_internal_whitespace(self):
+        """Replaces multiple internal spaces/tabs with a single space for each line."""
+        import re
+        def do_condense(line_content):
+            # Does not trim leading/trailing whitespace from the line itself.
+            return re.sub(r'[ \t]+', ' ', line_content)
+
+        self._process_selected_lines(do_condense, preserves_original_endings=True)
 
 
 if __name__ == "__main__":
