@@ -37,6 +37,9 @@ class EditorTab:
         self.text_area.tag_configure("search_highlight", background="yellow", foreground="black")
         self.text_area.tag_configure("current_search_highlight", background="orange", foreground="black")
 
+        # For managing debounced keyword highlighting
+        self._keyword_highlight_after_id = None
+
 
         # Custom scrollbar that calls our sync method
         self.scrollbar = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.text_area.yview)
@@ -52,6 +55,10 @@ class EditorTab:
         else:
             self.update_tab_title()
 
+        # Apply initial keyword highlighting if any are set globally
+        self.apply_keyword_highlights(self.app.keyword_highlight_settings)
+
+
     def load_file_content(self, filepath):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
@@ -62,6 +69,7 @@ class EditorTab:
             self.text_changed = False
             self.text_area.edit_modified(False)
             self.update_tab_title()
+            self.apply_keyword_highlights(self.app.keyword_highlight_settings) # Apply after loading
         except Exception as e:
             messagebox.showerror("Error Opening File", str(e))
             self.close_tab(check_save=False) # Close tab if file cannot be loaded
@@ -96,13 +104,89 @@ class EditorTab:
         self.text_area.after(1, self.redraw_line_numbers)
         if event and (str(event.type) == "Modified" or str(event.type) == "Configure"):
             self.app.update_status_bar()
-            if str(event.type) == "Modified": # Clear highlights if text is modified
-                self.clear_search_highlight_tags()
+            if str(event.type) == "Modified":
+                self.clear_search_highlight_tags() # Clear find/replace highlights
+                # Schedule keyword highlighting update (debounced)
+                if self.app.keyword_highlight_settings.get("active", False):
+                    if self._keyword_highlight_after_id:
+                        self.text_area.after_cancel(self._keyword_highlight_after_id)
+                    self._keyword_highlight_after_id = self.text_area.after(500,
+                        lambda: self.apply_keyword_highlights(self.app.keyword_highlight_settings))
 
 
     def clear_search_highlight_tags(self):
         self.text_area.tag_remove("search_highlight", "1.0", tk.END)
         self.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+
+    def apply_keyword_highlights(self, highlight_settings):
+        # Clear previous user keyword highlights
+        for i in range(len(self.app.pastel_colors) + 5): # Clear a few more tags than colors, just in case
+            try:
+                self.text_area.tag_remove(f"user_keyword_{i}", "1.0", tk.END)
+            except tk.TclError: # Tag might not exist yet
+                pass
+
+        if not highlight_settings or not highlight_settings.get("active", False) or not highlight_settings.get("parsed_keywords"):
+            return
+
+        keywords = highlight_settings["parsed_keywords"]
+        case_sensitive = highlight_settings["case_sensitive"]
+        whole_word = highlight_settings["whole_word"]
+        kw_to_color = highlight_settings["keyword_to_color_map"]
+        kw_to_tag = highlight_settings["keyword_to_tag_name_map"]
+
+        for keyword_text in keywords:
+            tag_name = kw_to_tag.get(keyword_text)
+            color = kw_to_color.get(keyword_text)
+            if not tag_name or not color:
+                continue
+
+            self.text_area.tag_configure(tag_name, background=color, foreground="black") # Ensure foreground for readability
+
+            start_index = "1.0"
+            while True:
+                # Simplified search logic adapted from TextEditor._search_in_text
+                nocase_local = not case_sensitive
+
+                # For whole word with keyword highlighting, we construct a regex if needed
+                # or use 'exact' for non-regex simple whole word.
+                # Since keyword highlighting is not using TextEditor's main regex engine flag,
+                # we decide here how to handle whole_word.
+                # Let's use a simple string search with 'exact' if whole_word is true.
+
+                search_pattern = keyword_text
+                use_regexp_for_this_keyword = False # Default to string search
+
+                if whole_word:
+                    # A common way to do whole word for string search is to wrap with word boundaries
+                    # if the underlying search method doesn't support 'exact' well or for more control.
+                    # However, tk.Text.search 'exact' option should work for basic whole word.
+                    # If we wanted regex-style whole word, we'd build \bkeyword\b pattern.
+                    # For keyword highlighting, let's assume 'exact' is sufficient for non-regex "whole word"
+                    pass
+
+
+                # We need a count variable for text_widget.search
+                length_var = tk.IntVar()
+                pos = self.text_area.search(search_pattern, start_index, tk.END,
+                                            nocase=nocase_local,
+                                            regexp=use_regexp_for_this_keyword, # False for now
+                                            exact=whole_word, # Use exact for whole word if not doing custom regex
+                                            count=length_var)
+
+                if pos:
+                    match_len = length_var.get()
+                    if match_len == 0 and len(search_pattern) > 0 : # Sometimes count is not set for exact matches if pattern is literal
+                        match_len = len(search_pattern)
+
+                    if match_len > 0:
+                        end_pos = self.text_area.index(f"{pos} + {match_len} chars")
+                        self.text_area.tag_add(tag_name, pos, end_pos)
+                        start_index = end_pos
+                    else: # No length, cannot proceed with this match
+                        break
+                else: # No more matches for this keyword
+                    break
 
     def on_key_or_mouse_release(self, event=None):
         # This is primarily for updating line/col in status bar
@@ -266,6 +350,23 @@ class TextEditor:
             slant=self.current_font_slant
         )
 
+        # Keyword Highlighting Settings
+        self.keyword_highlight_settings = {
+            "keywords_input_string": "",
+            "parsed_keywords": [], # List of unique keyword strings
+            "keyword_to_color_map": {}, # Maps keyword string to a color
+            "keyword_to_tag_name_map": {}, # Maps keyword string to a tag name like "user_keyword_0"
+            "case_sensitive": False,
+            "whole_word": True,
+            "active": False # Is highlighting currently active?
+        }
+        self.pastel_colors = [ # Background colors
+            "#FFDFD3", "#FFFACD", "#D7E9F7", "#E0FFFF", "#F0FFF0",
+            "#FFE4E1", "#FAFAD2", "#ADD8E6", "#E6E6FA", "#FFF0F5"
+        ] # Light Salmon, LemonChiffon, LightBlue (custom), PaleTurquoise, Honeydew,
+          # MistyRose, LightGoldenrodYellow, LightSkyBlue (alternative), Lavender, LavenderBlush
+
+
         # Create main menu
         self.menu_bar = tk.Menu(self.root)
         self.root.config(menu=self.menu_bar)
@@ -356,6 +457,8 @@ class TextEditor:
         self.view_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="View", menu=self.view_menu)
         self.view_menu.add_command(label="Change Font...", command=self.open_font_dialog)
+        self.view_menu.add_separator()
+        self.view_menu.add_command(label="Keyword Highlighting...", command=self.open_keyword_highlight_dialog)
 
 
         # Notebook for tabs
@@ -421,6 +524,10 @@ class TextEditor:
     def on_tab_changed(self, event=None):
         self.update_app_title()
         self.update_status_bar() # Update status bar when tab changes
+        current_tab = self.get_current_tab()
+        if current_tab and self.keyword_highlight_settings.get("active", False):
+            # Apply keyword highlighting to newly focused tab
+            current_tab.apply_keyword_highlights(self.keyword_highlight_settings)
 
     def update_status_bar(self):
         current_tab = self.get_current_tab()
@@ -1460,6 +1567,143 @@ class TextEditor:
             tab.line_numbers_font.config(**new_line_number_font_config)
             tab.text_area.update_idletasks() # Ensure text area layout is updated
             tab.redraw_line_numbers()
+
+    # --- Keyword Highlighting Methods ---
+    def open_keyword_highlight_dialog(self):
+        if hasattr(self, "keyword_dialog") and self.keyword_dialog.winfo_exists():
+            self.keyword_dialog.lift()
+            self.keyword_dialog.focus_set()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Keyword Highlighting")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        self.keyword_dialog = dialog
+
+        # Variables from self.keyword_highlight_settings
+        keywords_str_var = tk.StringVar(value=self.keyword_highlight_settings["keywords_input_string"])
+        case_var = tk.BooleanVar(value=self.keyword_highlight_settings["case_sensitive"])
+        whole_word_var = tk.BooleanVar(value=self.keyword_highlight_settings["whole_word"])
+
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(expand=True, fill=tk.BOTH)
+
+        ttk.Label(main_frame, text="Keywords (separated by '|'):").pack(anchor=tk.W, pady=(0,2))
+        keywords_entry = ttk.Entry(main_frame, textvariable=keywords_str_var, width=50)
+        keywords_entry.pack(fill=tk.X, pady=(0,10))
+        keywords_entry.focus_set()
+
+        options_frame = ttk.Frame(main_frame)
+        options_frame.pack(fill=tk.X, pady=5)
+        ttk.Checkbutton(options_frame, text="Case Sensitive", variable=case_var).pack(side=tk.LEFT, padx=(0,10))
+        ttk.Checkbutton(options_frame, text="Whole Word Only", variable=whole_word_var).pack(side=tk.LEFT)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10,0), side=tk.BOTTOM) # Pack at bottom
+
+        def on_apply():
+            self.update_keyword_highlight_settings(
+                keywords_str_var.get(),
+                case_var.get(),
+                whole_word_var.get()
+            )
+            # Dialog can remain open or be destroyed. Let's keep it open for now.
+            # dialog.destroy()
+
+        def on_clear_and_close(): # Renamed to be more descriptive
+            self.clear_keyword_highlight_settings()
+            keywords_str_var.set("") # Clear the entry in the dialog too
+            # dialog.destroy() # Keep dialog open, user might want to enter new keywords or cancel
+
+        def on_cancel():
+            # Revert UI elements to match actual settings if dialog is cancelled without apply
+            keywords_str_var.set(self.keyword_highlight_settings["keywords_input_string"])
+            case_var.set(self.keyword_highlight_settings["case_sensitive"])
+            whole_word_var.set(self.keyword_highlight_settings["whole_word"])
+            dialog.destroy()
+
+
+        ttk.Button(button_frame, text="Apply", command=on_apply).pack(side=tk.LEFT, padx=5) # Changed from RIGHT
+        ttk.Button(button_frame, text="Clear All Highlights", command=on_clear_and_close).pack(side=tk.LEFT, padx=5) # Changed from RIGHT
+        ttk.Button(button_frame, text="Close", command=on_cancel).pack(side=tk.RIGHT) # This one is fine on right
+
+        dialog.bind("<Escape>", lambda e: on_cancel()) # Bind Esc to cancel
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel) # Handle window close button as cancel
+
+        dialog.grab_set()
+
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f'+{x}+{y}')
+
+    def update_keyword_highlight_settings(self, input_str, case_sens, whole_word):
+        self.keyword_highlight_settings["keywords_input_string"] = input_str
+        self.keyword_highlight_settings["case_sensitive"] = case_sens
+        self.keyword_highlight_settings["whole_word"] = whole_word
+
+        raw_keywords = [kw.strip() for kw in input_str.split('|') if kw.strip()]
+
+        # Determine unique keywords for color assignment based on original casing,
+        # as multiple distinct original keywords might map to the same processed (e.g. lowercased) keyword.
+        # However, for highlighting, we need a list of keywords that will actually be searched.
+        # If not case sensitive for matching, "Word" and "word" are the same search.
+
+        # Let's use a simpler approach: parsed_keywords are the unique strings to get colors.
+        # The actual search will use these parsed_keywords but apply case_sensitive at search time.
+
+        unique_keywords_for_coloring = sorted(list(set(raw_keywords))) # Processed for uniqueness for color mapping
+
+        self.keyword_highlight_settings["parsed_keywords"] = raw_keywords # Store raw keywords for search
+
+        self.keyword_highlight_settings["keyword_to_color_map"] = {}
+        self.keyword_highlight_settings["keyword_to_tag_name_map"] = {}
+
+        # Assign colors and tag names based on unique_keywords_for_coloring to ensure 'KEY' and 'key' get same color if overall matching is case-insensitive
+        # but different colors if overall matching is case-sensitive AND they are treated as distinct keywords.
+        # For simplicity now: each unique entry in raw_keywords (after strip) gets a color.
+        # If "Hello" and "hello" are both in raw_keywords, they get different colors.
+        # The "case_sensitive" checkbox will then control if "hello" matches "Hello" during search.
+
+        temp_unique_raw_keywords = []
+        seen_for_color_assignment = set()
+
+        for kw in raw_keywords:
+            # For color assignment, uniqueness can be based on the keyword itself or its lowercase form
+            # depending on desired behavior. Let's use original form for distinct colors if user typed them differently.
+            # Example: "KEY|key" -> KEY gets color1, key gets color2. Search for "KEY" might find "key" if case_sensitive is false.
+            if kw not in seen_for_color_assignment:
+                temp_unique_raw_keywords.append(kw)
+                seen_for_color_assignment.add(kw)
+
+        self.keyword_highlight_settings["parsed_keywords"] = temp_unique_raw_keywords # These are the unique keywords that will each get a color/tag
+
+        for i, kw_original_case in enumerate(self.keyword_highlight_settings["parsed_keywords"]):
+            color = self.pastel_colors[i % len(self.pastel_colors)]
+            tag_name = f"user_keyword_{i}" # Tags are based on index in the unique list
+            self.keyword_highlight_settings["keyword_to_color_map"][kw_original_case] = color
+            self.keyword_highlight_settings["keyword_to_tag_name_map"][kw_original_case] = tag_name
+
+        self.keyword_highlight_settings["active"] = bool(self.keyword_highlight_settings["parsed_keywords"])
+        self.apply_all_tabs_keyword_highlights()
+
+    def clear_keyword_highlight_settings(self):
+        self.keyword_highlight_settings["keywords_input_string"] = ""
+        self.keyword_highlight_settings["parsed_keywords"] = []
+        self.keyword_highlight_settings["keyword_to_color_map"] = {}
+        self.keyword_highlight_settings["keyword_to_tag_name_map"] = {}
+        # Reset options to default when clearing all, or keep user's last choice?
+        # Keeping user's last choice for case/whole_word seems reasonable.
+        # self.keyword_highlight_settings["case_sensitive"] = False
+        # self.keyword_highlight_settings["whole_word"] = True
+        self.keyword_highlight_settings["active"] = False
+        self.apply_all_tabs_keyword_highlights() # This will effectively clear highlights from tabs
+
+    def apply_all_tabs_keyword_highlights(self):
+        for tab in self.tabs:
+            # Pass the entire settings dict to the tab method
+            tab.apply_keyword_highlights(self.keyword_highlight_settings)
 
 
 if __name__ == "__main__":
