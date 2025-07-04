@@ -47,8 +47,9 @@ class EditorTab:
         # Filter state for this tab
         self.original_text_for_filter = None
         self.is_filtered_view = False
-        self.current_filter_str = "" # Last successfully applied filter string
-        self.current_filter_case_sensitive = False # Last case sensitivity
+        self.current_filter_str = ""
+        self.current_filter_case_sensitive = False
+        self.current_filter_invert = False # Added for invert state
 
         # Syntax highlighting tags
         self.text_area.tag_configure("hl_keyword", foreground="#0000FF")  # Blue
@@ -147,12 +148,13 @@ class EditorTab:
         self.text_area.tag_remove("search_highlight", "1.0", tk.END)
         self.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
 
-    def apply_text_filter(self, filter_str, case_sensitive):
-        # print(f"DEBUG: Tab '{self.current_file}' apply_text_filter: '{filter_str}', case_sensitive: {case_sensitive}")
+    def apply_text_filter(self, filter_str, case_sensitive, invert_filter):
+        # print(f"DEBUG: Tab '{self.current_file}' apply_text_filter: '{filter_str}', CS: {case_sensitive}, Invert: {invert_filter}")
 
         # Update current filter state for this tab
         self.current_filter_str = filter_str
         self.current_filter_case_sensitive = case_sensitive
+        self.current_filter_invert = invert_filter
 
         # Make text area temporarily writable for modifications
         original_state = self.text_area.cget("state")
@@ -187,8 +189,15 @@ class EditorTab:
 
             for line_content_with_ending in lines:
                 line_to_check_in = line_content_with_ending if case_sensitive else line_content_with_ending.lower()
-                if str_to_find in line_to_check_in:
-                    matching_lines.append(line_content_with_ending)
+
+                match_found = (str_to_find in line_to_check_in)
+
+                if invert_filter:
+                    if not match_found:
+                        matching_lines.append(line_content_with_ending)
+                else: # Normal filter
+                    if match_found:
+                        matching_lines.append(line_content_with_ending)
 
             self.text_area.delete("1.0", tk.END)
             if matching_lines:
@@ -388,9 +397,61 @@ class EditorTab:
     def redraw_line_numbers(self):
         self.line_numbers.delete("all")
 
-        # Get the first and last visible line index in the text_area
+        # Ensure text area is updated for dlineinfo to be accurate
+        self.text_area.update_idletasks()
+
         first_visible_char_index = self.text_area.index("@0,0")
-        last_visible_char_index = self.text_area.index(f"@0,{self.text_area.winfo_height()}")
+
+        # Handle case where text_area might be empty or not yet fully initialized
+        if not first_visible_char_index:
+            return
+
+        try:
+            first_line_num_str = first_visible_char_index.split('.')[0]
+            if not first_line_num_str: # Should not happen with valid index like "1.0"
+                return
+            first_line_num = int(first_line_num_str)
+        except ValueError:
+            return # Invalid index format
+
+        current_displayed_line_idx = first_line_num
+
+        first_visible_line_bbox = self.text_area.dlineinfo(f"{first_line_num}.0")
+        if not first_visible_line_bbox: # No info for the first supposed visible line (e.g., empty text area)
+            return
+
+        y_offset_of_visible_area_top = first_visible_line_bbox[1]
+
+        while True:
+            dline_info = self.text_area.dlineinfo(f"{current_displayed_line_idx}.0")
+
+            if dline_info is None: # No more displayed lines
+                break
+
+            line_y_in_text_content = dline_info[1]
+            line_height = dline_info[3]
+
+            canvas_y = (line_y_in_text_content - y_offset_of_visible_area_top) + (line_height / 2)
+
+            if canvas_y < 0 and current_displayed_line_idx > first_line_num :
+                 # This can happen if first_line_num was > 1 due to scrolling, then content changed
+                 # such that total lines are less than first_line_num.
+                 pass # The dlineinfo check for None should handle termination.
+
+
+            if canvas_y > self.line_numbers.winfo_height() + line_height: # line_height added for buffer
+                # Stop if the line would be drawn completely below the visible canvas area
+                break
+
+            # Only draw if line is somewhat visible
+            if (line_y_in_text_content + line_height) >= y_offset_of_visible_area_top and \
+               line_y_in_text_content <= y_offset_of_visible_area_top + self.line_numbers.winfo_height():
+                self.line_numbers.create_text(38, canvas_y, anchor=tk.NE, text=str(current_displayed_line_idx), font=self.line_numbers_font)
+
+            current_displayed_line_idx += 1
+
+        # Dynamic width for line numbers canvas (optional, can be complex)
+        # last_line_str_len = len(str(i-1))
 
         # Convert char indices to line numbers (1-based)
         first_line_num = int(first_visible_char_index.split('.')[0])
@@ -646,6 +707,10 @@ class TextEditor:
         self.filter_case_checkbox = ttk.Checkbutton(self.filter_bar_frame, text="Case Sensitive", variable=self.filter_case_var)
         self.filter_case_checkbox.pack(side=tk.LEFT, padx=5)
 
+        self.filter_invert_var = tk.BooleanVar(value=False)
+        self.filter_invert_checkbox = ttk.Checkbutton(self.filter_bar_frame, text="Invert", variable=self.filter_invert_var)
+        self.filter_invert_checkbox.pack(side=tk.LEFT, padx=5)
+
         # Using a simple text 'x' for close button for now
         self.filter_close_btn = ttk.Button(self.filter_bar_frame, text="✕", command=self.toggle_filter_bar, width=3)
         self.filter_close_btn.pack(side=tk.LEFT, padx=5)
@@ -653,6 +718,7 @@ class TextEditor:
         # Traces for filter changes
         self.filter_text_var.trace_add("write", self.on_filter_settings_changed)
         self.filter_case_var.trace_add("write", self.on_filter_settings_changed)
+        self.filter_invert_var.trace_add("write", self.on_filter_settings_changed)
 
         # Example Toolbar Buttons (add more as needed)
         btn_padx = 3 # Increased padx for buttons
@@ -867,7 +933,8 @@ class TextEditor:
         if current_tab:
             filter_str = self.filter_text_var.get()
             case_sens = self.filter_case_var.get()
-            current_tab.apply_text_filter(filter_str, case_sens)
+            invert = self.filter_invert_var.get()
+            current_tab.apply_text_filter(filter_str, case_sens, invert)
 
 
     def update_status_bar(self):
