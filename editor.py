@@ -10,7 +10,7 @@ class EditorTab:
     def __init__(self, notebook_widget, app_instance, file_path=None):
         self.app = app_instance
         self.notebook = notebook_widget
-        self.frame = ttk.Frame(self.notebook)
+        self.frame = ttk.Frame(self.notebook, padding=2) # Added padding=2
         self.frame.pack(fill=tk.BOTH, expand=True)
 
         self.line_numbers_font = tkfont.Font(family=app_instance.editor_font.cget("family"), size=app_instance.editor_font.cget("size"))
@@ -437,38 +437,41 @@ class TextEditor:
         self.root.config(menu=self.menu_bar)
 
         # Toolbar
-        self.toolbar_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=2)
-        self.toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        self.toolbar_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=2) # Keep internal padding for frame itself
+        self.toolbar_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 2)) # Add pady below toolbar
 
         # Example Toolbar Buttons (add more as needed)
+        btn_padx = 3 # Increased padx for buttons
+        btn_pady = 2
+
         self.new_btn = ttk.Button(self.toolbar_frame, text="New", command=self.new_file_action_handler)
-        self.new_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.new_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         self.open_btn = ttk.Button(self.toolbar_frame, text="Open", command=self.open_file_action_handler)
-        self.open_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.open_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         self.save_btn = ttk.Button(self.toolbar_frame, text="Save", command=lambda: self.save_action_handler(save_as_if_needed=False))
-        self.save_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.save_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         # Separator could be a Frame with height or specific style
-        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady) # Use btn_pady for consistency
 
         self.cut_btn = ttk.Button(self.toolbar_frame, text="Cut", command=self.cut_action)
-        self.cut_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.cut_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         self.copy_btn = ttk.Button(self.toolbar_frame, text="Copy", command=self.copy_action)
-        self.copy_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.copy_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         self.paste_btn = ttk.Button(self.toolbar_frame, text="Paste", command=self.paste_action)
-        self.paste_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.paste_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
-        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady)
 
         self.undo_btn = ttk.Button(self.toolbar_frame, text="Undo", command=self.undo_action)
-        self.undo_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.undo_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
         self.redo_btn = ttk.Button(self.toolbar_frame, text="Redo", command=self.redo_action)
-        self.redo_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.redo_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
 
 
         # File menu
@@ -945,8 +948,12 @@ class TextEditor:
         self.remove_duplicates_sort_var = tk.BooleanVar(value=False) # Renamed for clarity
 
         # --- UI Elements ---
-        type_frame = ttk.LabelFrame(dialog, text="Sort Type", padding=5)
-        type_frame.pack(padx=10, pady=5, fill=tk.X)
+        # Main content frame with padding
+        main_dialog_frame = ttk.Frame(dialog, padding=10)
+        main_dialog_frame.pack(expand=True, fill=tk.BOTH)
+
+        type_frame = ttk.LabelFrame(main_dialog_frame, text="Sort Type", padding=5) # Pack into main_dialog_frame
+        type_frame.pack(fill=tk.X) # Removed padx/pady from here
 
         ttk.Radiobutton(type_frame, text="Alphabetical (Ascending)", variable=self.sort_type_var, value="alpha_asc", command=self.update_sort_options_state).pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="Alphabetical (Descending)", variable=self.sort_type_var, value="alpha_desc", command=self.update_sort_options_state).pack(anchor=tk.W)
@@ -954,8 +961,8 @@ class TextEditor:
         ttk.Radiobutton(type_frame, text="By Length (Longest First)", variable=self.sort_type_var, value="len_desc", command=self.update_sort_options_state).pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="Reverse Line Order", variable=self.sort_type_var, value="reverse", command=self.update_sort_options_state).pack(anchor=tk.W)
 
-        options_frame = ttk.LabelFrame(dialog, text="Options", padding=5)
-        options_frame.pack(padx=10, pady=5, fill=tk.X)
+        options_frame = ttk.LabelFrame(main_dialog_frame, text="Options", padding=5) # Pack into main_dialog_frame
+        options_frame.pack(pady=5, fill=tk.X) # Removed padx from here
 
         self.case_sensitive_checkbox = ttk.Checkbutton(options_frame, text="Case Sensitive", variable=self.case_sensitive_sort_var)
         self.case_sensitive_checkbox.pack(anchor=tk.W, padx=5)
@@ -976,10 +983,10 @@ class TextEditor:
         def on_cancel():
             dialog.destroy()
 
-        button_frame = ttk.Frame(dialog)
+        button_frame = ttk.Frame(main_dialog_frame) # Pack into main_dialog_frame
         button_frame.pack(pady=10, fill=tk.X, side=tk.BOTTOM)
         ttk.Button(button_frame, text="Apply", command=on_apply).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.RIGHT, padx=5) # padx=5 on Cancel too
 
         dialog.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
@@ -1139,8 +1146,12 @@ class TextEditor:
 
 
         # UI Elements
-        input_frame = ttk.Frame(dialog)
-        input_frame.pack(padx=10, pady=10, fill=tk.X)
+        # Main content frame with padding
+        main_dialog_frame = ttk.Frame(dialog, padding=10)
+        main_dialog_frame.pack(expand=True, fill=tk.BOTH)
+
+        input_frame = ttk.Frame(main_dialog_frame) # Pack into main_dialog_frame
+        input_frame.pack(fill=tk.X) # Removed padx/pady from here, main_dialog_frame has it
 
         ttk.Label(input_frame, text="Find what:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
         self.find_entry = ttk.Entry(input_frame, textvariable=self.find_what_var, width=40)
@@ -1152,8 +1163,8 @@ class TextEditor:
 
         input_frame.columnconfigure(1, weight=1) # Make entry fields expandable
 
-        options_frame = ttk.LabelFrame(dialog, text="Options")
-        options_frame.pack(padx=10, pady=5, fill=tk.X)
+        options_frame = ttk.LabelFrame(main_dialog_frame, text="Options") # Pack into main_dialog_frame
+        options_frame.pack(pady=5, fill=tk.X) # Removed padx from here
 
         ttk.Checkbutton(options_frame, text="Case sensitive", variable=self.case_sensitive_find_var).grid(row=0, column=0, sticky=tk.W, padx=5)
         ttk.Checkbutton(options_frame, text="Whole word", variable=self.whole_word_var).grid(row=0, column=1, sticky=tk.W, padx=5)
@@ -1162,8 +1173,8 @@ class TextEditor:
         ttk.Checkbutton(options_frame, text="Search backwards", variable=self.search_backwards_var).grid(row=2, column=0, sticky=tk.W, padx=5)
 
 
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(padx=10, pady=10, fill=tk.X)
+        button_frame = ttk.Frame(main_dialog_frame) # Pack into main_dialog_frame
+        button_frame.pack(pady=10, fill=tk.X) # Removed padx from here
 
         ttk.Button(button_frame, text="Find Next", command=self.find_next).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Replace", command=self.replace_once).pack(side=tk.LEFT, padx=5)
