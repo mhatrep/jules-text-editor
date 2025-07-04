@@ -43,7 +43,12 @@ class EditorTab:
         # For managing debounced syntax highlighting
         self._syntax_highlight_after_id = None
         self.current_language_name = None
-        self._syntax_highlight_after_id = None
+
+        # Filter state for this tab
+        self.original_text_for_filter = None
+        self.is_filtered_view = False
+        self.current_filter_str = "" # Last successfully applied filter string
+        self.current_filter_case_sensitive = False # Last case sensitivity
 
         # Syntax highlighting tags
         self.text_area.tag_configure("hl_keyword", foreground="#0000FF")  # Blue
@@ -141,6 +146,71 @@ class EditorTab:
     def clear_search_highlight_tags(self):
         self.text_area.tag_remove("search_highlight", "1.0", tk.END)
         self.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+
+    def apply_text_filter(self, filter_str, case_sensitive):
+        # print(f"DEBUG: Tab '{self.current_file}' apply_text_filter: '{filter_str}', case_sensitive: {case_sensitive}")
+
+        # Update current filter state for this tab
+        self.current_filter_str = filter_str
+        self.current_filter_case_sensitive = case_sensitive
+
+        # Make text area temporarily writable for modifications
+        original_state = self.text_area.cget("state")
+        if original_state == tk.DISABLED:
+            self.text_area.config(state=tk.NORMAL)
+
+        if not filter_str:  # Filter is empty, restore original text if needed
+            if self.is_filtered_view and self.original_text_for_filter is not None:
+                # print(f"DEBUG: Restoring original text. Length: {len(self.original_text_for_filter)}")
+                current_insert = self.text_area.index(tk.INSERT) # Try to save cursor
+                self.text_area.delete("1.0", tk.END)
+                self.text_area.insert("1.0", self.original_text_for_filter)
+                self.original_text_for_filter = None
+                self.is_filtered_view = False
+                try:
+                    self.text_area.mark_set(tk.INSERT, current_insert) # Try to restore
+                    self.text_area.see(current_insert)
+                except tk.TclError:
+                    self.text_area.mark_set(tk.INSERT, "1.0") # Fallback
+            # else: not in filtered view or no original text to restore
+        else:  # Filter is active
+            if not self.is_filtered_view:
+                # Store original text only when switching from non-filtered to filtered view
+                self.original_text_for_filter = self.text_area.get("1.0", tk.END + "-1c")
+                self.is_filtered_view = True
+
+            source_text_for_filtering = self.original_text_for_filter
+            lines = source_text_for_filtering.splitlines(keepends=True) # Keep endings for rejoining
+            matching_lines = []
+
+            str_to_find = filter_str if case_sensitive else filter_str.lower()
+
+            for line_content_with_ending in lines:
+                line_to_check_in = line_content_with_ending if case_sensitive else line_content_with_ending.lower()
+                if str_to_find in line_to_check_in:
+                    matching_lines.append(line_content_with_ending)
+
+            self.text_area.delete("1.0", tk.END)
+            if matching_lines:
+                self.text_area.insert("1.0", "".join(matching_lines))
+            # print(f"DEBUG: Filtered. Displaying {len(matching_lines)} lines.")
+
+        # Restore original text area state if it was disabled (e.g. for read-only filtered view)
+        # For now, we are keeping it NORMAL. If we make it DISABLED when filtered:
+        # if self.is_filtered_view:
+        #     self.text_area.config(state=tk.DISABLED)
+        # else:
+        #     self.text_area.config(state=tk.NORMAL) # Ensure it's normal if not filtered
+
+        # Refresh UI elements that depend on text content
+        self.redraw_line_numbers()
+        if self.current_language_name:
+            self.apply_syntax_highlighting() # This will use current text_area content
+        if self.app.keyword_highlight_settings.get("active", False):
+            self.apply_keyword_highlights(self.app.keyword_highlight_settings)
+
+        self.app.update_status_bar()
+
 
     def _detect_and_set_language(self, filepath):
         self.current_language_name = None # Reset before detection
@@ -560,8 +630,29 @@ class TextEditor:
         self.root.config(menu=self.menu_bar)
 
         # Toolbar
-        self.toolbar_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=2) # Keep internal padding for frame itself
-        self.toolbar_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 2)) # Add pady below toolbar
+        self.toolbar_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=2)
+        self.toolbar_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 2))
+
+        # Filter Bar (initially hidden)
+        self.filter_bar_frame = ttk.Frame(self.root, padding=(5,2)) # Padding: (left/right, top/bottom)
+        # Packed by toggle_filter_bar method
+
+        self.filter_text_var = tk.StringVar()
+        ttk.Label(self.filter_bar_frame, text="Filter:").pack(side=tk.LEFT, padx=(0,5))
+        self.filter_entry = ttk.Entry(self.filter_bar_frame, textvariable=self.filter_text_var, width=40)
+        self.filter_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        self.filter_case_var = tk.BooleanVar(value=False)
+        self.filter_case_checkbox = ttk.Checkbutton(self.filter_bar_frame, text="Case Sensitive", variable=self.filter_case_var)
+        self.filter_case_checkbox.pack(side=tk.LEFT, padx=5)
+
+        # Using a simple text 'x' for close button for now
+        self.filter_close_btn = ttk.Button(self.filter_bar_frame, text="✕", command=self.toggle_filter_bar, width=3)
+        self.filter_close_btn.pack(side=tk.LEFT, padx=5)
+
+        # Traces for filter changes
+        self.filter_text_var.trace_add("write", self.on_filter_settings_changed)
+        self.filter_case_var.trace_add("write", self.on_filter_settings_changed)
 
         # Example Toolbar Buttons (add more as needed)
         btn_padx = 3 # Increased padx for buttons
@@ -676,8 +767,9 @@ class TextEditor:
         self.view_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="View", menu=self.view_menu)
         self.view_menu.add_command(label="Change Font...", command=self.open_font_dialog)
-        self.view_menu.add_separator()
         self.view_menu.add_command(label="Keyword Highlighting...", command=self.open_keyword_highlight_dialog)
+        self.view_menu.add_separator()
+        self.view_menu.add_command(label="Toggle Filter Bar", command=self.toggle_filter_bar, accelerator="Ctrl+Shift+F")
 
 
         # Notebook for tabs
@@ -712,7 +804,8 @@ class TextEditor:
         self.root.bind_all("<Control-s>", lambda event: self.save_action_handler(save_as_if_needed=False))
         self.root.bind_all("<Control-S>", self.save_as_action_handler) # Ctrl+Shift+S
         self.root.bind_all("<Control-w>", self.close_current_tab_action_handler)
-        self.root.bind_all("<Control-f>", self.open_find_replace_dialog) # This one already returns "break"
+        self.root.bind_all("<Control-f>", self.open_find_replace_dialog)
+        self.root.bind_all("<Control-F>", lambda event: self.toggle_filter_bar()) # Ctrl+Shift+F
 
 
         # Edit shortcuts (need to be routed to active tab's text_area)
@@ -753,8 +846,28 @@ class TextEditor:
             # Apply syntax highlighting to newly focused tab if language is set
             if current_tab.current_language_name:
                 current_tab.apply_syntax_highlighting()
-            else: # If no language, ensure syntax highlights are cleared (e.g. switching from .py to .txt tab)
+            else: # If no language, ensure syntax highlights are cleared
                 current_tab._clear_syntax_highlight_tags()
+
+            # If filter bar is visible, apply its current settings to the new tab
+            if self.filter_bar_frame.winfo_ismapped():
+                self.on_filter_settings_changed() # This will apply to the new current_tab
+
+
+    def on_filter_settings_changed(self, *args):
+        # This method is called when filter text or case sensitivity changes
+        if not self.filter_bar_frame.winfo_ismapped():
+            # If the filter bar isn't visible, but a trace fires (e.g. from toggle_filter_bar clearing text),
+            # ensure filter is cleared from tab if it was active.
+            # However, toggle_filter_bar already handles this.
+            # This method should primarily act if the bar is visible and user is interacting.
+            return
+
+        current_tab = self.get_current_tab()
+        if current_tab:
+            filter_str = self.filter_text_var.get()
+            case_sens = self.filter_case_var.get()
+            current_tab.apply_text_filter(filter_str, case_sens)
 
 
     def update_status_bar(self):
@@ -2351,6 +2464,19 @@ class TextEditor:
             return ", ".join(non_empty_lines)
 
         self._process_text(do_join_comma)
+
+    def toggle_filter_bar(self, event=None):
+        if self.filter_bar_frame.winfo_ismapped():
+            self.filter_bar_frame.pack_forget()
+            # When hiding, clear the filter from the current tab
+            current_tab = self.get_current_tab()
+            if current_tab and current_tab.is_filtered_view:
+                self.filter_text_var.set("") # This should trigger on_filter_settings_changed -> apply_text_filter
+                # current_tab.apply_text_filter("", self.filter_case_var.get()) # Explicit call if trace doesn't fire fast enough or is disabled
+        else:
+            self.filter_bar_frame.pack(side=tk.TOP, fill=tk.X, pady=(0,2), before=self.notebook)
+            self.filter_entry.focus_set()
+        return "break" # For key binding
 
 
 if __name__ == "__main__":
