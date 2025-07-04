@@ -292,25 +292,62 @@ class EditorTab:
         if check_save and not self.check_unsaved_changes_tab():
             return False # Don't close
 
-        current_tabs = list(self.notebook.tabs())
+        # current_tabs = list(self.notebook.tabs()) # Not needed if removing by self
         try:
-            tab_index = current_tabs.index(self.frame_id())
-            self.notebook.forget(tab_index)
-            self.app.tabs.pop(tab_index) # Remove from app's list of tabs
-            if not self.app.tabs: # If no tabs left, create a new untitled one or exit
-                if self.app.quitting_app: # if app is quitting, don't create new tab
-                    if len(self.notebook.tabs()) == 0: # if it was the last tab during quit
+            # self.notebook.forget(self.frame_id()) # This is correct
+            # Find self in the app's list of EditorTab objects to remove it.
+            # The visual tab needs to be removed from the notebook first.
+
+            original_tab_count = len(self.app.tabs)
+            selected_tab_before_close = self.app.notebook.index(tk.CURRENT) # Get index of currently selected tab in notebook
+
+            self.notebook.forget(self.frame_id()) # Remove from GUI
+
+            if self in self.app.tabs:
+                self.app.tabs.remove(self)
+            else:
+                # This state indicates a mismatch between notebook tabs and self.app.tabs tracking
+                # This ideally shouldn't happen. For robustness, we proceed.
+                print(f"Warning: EditorTab instance {self} was not found in self.app.tabs during close_tab.")
+
+            if not self.app.tabs: # If this was the last tab object in our list
+                if self.app.quitting_app:
+                    # If quitting and no actual tabs left in notebook, destroy root
+                    if len(self.app.notebook.tabs()) == 0:
                         self.app.root.destroy()
+                    # else, other tabs might exist if self.app.tabs was out of sync, let exit_editor_action handle
                 else:
-                    self.app.new_file_action()
-            self.app.update_app_title()
+                    self.app.new_file_action() # Create a new untitled tab
+            else:
+                # If other tabs remain, try to select a sensible one.
+                # If the closed tab was selected, select the previous one or first one.
+                # Notebook's own selection behavior after forget might handle this,
+                # but an explicit select can ensure on_tab_changed fires.
+                if len(self.app.notebook.tabs()) > 0:
+                    if selected_tab_before_close >= len(self.app.notebook.tabs()): # if last tab was closed
+                        self.app.notebook.select(len(self.app.notebook.tabs()) - 1)
+                    # else: notebook might auto-select, or current selection is still valid.
+                    # on_tab_changed will be triggered if selection changes.
+                else: # Should be covered by "if not self.app.tabs" creating new one
+                    pass
+
+            # update_app_title and update_status_bar are called by on_tab_changed
+            # if a new tab is selected or created.
+            # If no tab change event (e.g. closing an unfocused tab), we might need an explicit update.
+            # However, TextEditor.close_current_tab_action calls update_status_bar explicitly.
+            # And update_app_title is also typically called via on_tab_changed.
+            # Let's ensure on_tab_changed is robustly called if selection actually changes.
+            # The notebook <<NotebookTabChanged>> event should handle this.
+            self.app.update_app_title() # Explicitly update title
+            self.app.update_status_bar() # Explicitly update status bar
+
             return True
-        except (ValueError, tk.TclError): # Tab not found or error during forget
-            # This might happen if tab was already closed or during shutdown
-            if not self.app.tabs and not self.app.quitting_app:
-                 self.app.new_file_action()
-            elif not self.app.tabs and self.app.quitting_app and len(self.notebook.tabs()) == 0:
-                 self.app.root.destroy()
+        except tk.TclError as e: # Catch specific Tcl errors from notebook operations
+            print(f"Error closing tab (TclError): {e}")
+            # Fallback or recovery might be needed if notebook is in a bad state
+            return False
+        except Exception as e: # Catch any other unexpected errors
+            print(f"Unexpected error closing tab: {e}")
             return False
 
 
@@ -345,24 +382,29 @@ class TextEditor:
             "Inconsolata", "Fixedsys", "Terminal", "Monospace"
         ]) # Sorted for consistent fallback behavior if needed
 
-        system_fonts = tkfont.families()
+        system_fonts = set(tkfont.families()) # Use a set for efficient lookup
 
-        # Determine a suitable default fixed-width font
-        default_family_to_set = "TkFixedFont" # Ultimate fallback
-        if "TkFixedFont" in system_fonts:
-            default_family_to_set = "TkFixedFont"
-        else: # Try others from our known list
+        # Determine a suitable default fixed-width font, prioritizing Courier New
+        preferred_defaults = ["Courier New", "Consolas", "TkFixedFont"]
+
+        default_family_to_set = None
+        for preferred_font in preferred_defaults:
+            if preferred_font in system_fonts:
+                default_family_to_set = preferred_font
+                break
+
+        if not default_family_to_set: # If none of the top preferences are found
+            # Try any other known fixed-width font
             for ff in self.known_fixed_fonts:
-                if ff == "TkFixedFont": continue # Already checked
                 if ff in system_fonts:
                     default_family_to_set = ff
                     break
-            # If still no match, default_family_to_set remains "TkFixedFont" (tk will use a fallback)
-            # or could be the first font from system_fonts if absolutely nothing else.
-            # For now, relying on Tk's fallback for TkFixedFont if it's not "real".
+
+        if not default_family_to_set: # Absolute fallback if still nothing from known_fixed_fonts
+            default_family_to_set = "TkFixedFont" # Rely on Tk to provide something
 
         self.current_font_family = default_family_to_set
-        self.current_font_size = 10
+        self.current_font_size = 14 # Changed default size
         self.current_font_weight = "normal"
         self.current_font_slant = "roman"
 
