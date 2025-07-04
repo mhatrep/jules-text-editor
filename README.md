@@ -24,12 +24,23 @@ Jules Text Editor is a multi-tab text editor built with Python and Tkinter, offe
         *   To Title Case
         (Applies to selected text or the whole document.)
     *   **Sort Lines**:
-        *   Options: Ascending/Descending, Case Sensitive/Insensitive, Remove Duplicate Lines.
-        *   Dialog to configure sort parameters.
+        *   Options: Alphabetical (Asc/Desc), By Length (Shortest/Longest First), Reverse Line Order.
+        *   Dialog to configure sort parameters, including Case Sensitive and Remove Duplicates options where applicable.
         (Applies to selected lines or the whole document.)
+    *   **Line Spacing Sub-menu**:
+        *   **Condense Internal Whitespace**: Replaces multiple internal spaces/tabs on each line with a single space. Preserves leading/trailing line whitespace.
+        *   **Double Space Lines**: Inserts one blank line after each original line.
+        *   **Reduce Multiple Blank Lines to One**: Ensures no more than one blank line between blocks of text; also trims leading/trailing blank lines from the processed section.
+        *   **Remove All Blank Lines**: Deletes all lines that are empty or contain only whitespace.
+    *   **Line Alteration Sub-menu**:
+        *   **Delete Duplicate Consecutive Lines**: Keeps the first line of a consecutive block of identical lines and deletes the rest (emulates `uniq`).
+        *   **Reverse Lines**: Reverses the order of the selected lines (or all lines).
+    *   **Join/Split Lines Sub-menu**:
+        *   **Join Lines (with space)**: Joins selected/all lines into a single line, using a space as a separator. Lines are trimmed of whitespace and empty lines (after trim) are filtered out before joining.
+        *   **Join Lines (with ', ')**: Similar to above, but uses a comma followed by a space (\", \") as the separator.
 *   **Search (Search Menu)**:
     *   **Find/Replace Dialog (Ctrl+F)**:
-        *   Find Next, Replace, Replace All.
+        *   Find Next, Replace, Replace All. All matches highlighted, current match distinctly.
         *   Options: Case sensitive, Whole word, Regular expression (uses Tkinter's built-in regex capabilities), Wrap around, Search backwards.
         *   Non-modal dialog allows interaction with text while open.
         *   Find field can be pre-populated with selected text.

@@ -536,6 +536,13 @@ class TextEditor:
         self.line_alteration_menu.add_command(label="Delete Duplicate Consecutive Lines", command=self.delete_duplicate_consecutive_lines)
         self.line_alteration_menu.add_command(label="Reverse Lines", command=self.reverse_lines_action)
 
+        # Join/Split Lines Sub-menu
+        self.join_split_lines_menu = tk.Menu(self.format_menu, tearoff=0)
+        self.format_menu.add_cascade(label="Join/Split Lines", menu=self.join_split_lines_menu)
+        self.join_split_lines_menu.add_command(label="Join Lines (with space)", command=self.join_lines_with_space)
+        self.join_split_lines_menu.add_command(label="Join Lines (with ', ')", command=self.join_lines_with_comma_space)
+        # Future items will be added here
+
 
         # Search Menu (for Find/Replace)
         self.search_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -2176,6 +2183,38 @@ class TextEditor:
             return re.sub(r'[ \t]+', ' ', line_content)
 
         self._process_selected_lines(do_condense, preserves_original_endings=True)
+
+    def join_lines_with_space(self):
+        """Joins selected lines with a single space, after trimming each line."""
+        def do_join(text):
+            lines = text.splitlines()
+            trimmed_lines = [line.strip() for line in lines]
+            non_empty_lines = [line for line in trimmed_lines if line] # Filter out empty lines after strip
+
+            if not non_empty_lines:
+                return "" # If all lines were empty or became empty
+
+            return " ".join(non_empty_lines)
+            # _process_text will handle adding a final newline if it's replacing the whole document.
+            # If it's replacing a selection, it typically preserves the selection's overall newline status
+            # or lack thereof, which might mean the joined line doesn't get a newline if the selection didn't end with one.
+            # This is usually fine.
+
+        self._process_text(do_join)
+
+    def join_lines_with_comma_space(self):
+        """Joins selected lines with ', ', after trimming each line."""
+        def do_join_comma(text):
+            lines = text.splitlines()
+            trimmed_lines = [line.strip() for line in lines]
+            non_empty_lines = [line for line in trimmed_lines if line]
+
+            if not non_empty_lines:
+                return ""
+
+            return ", ".join(non_empty_lines)
+
+        self._process_text(do_join_comma)
 
 
 if __name__ == "__main__":
