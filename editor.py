@@ -116,11 +116,15 @@ class EditorTab:
     def on_text_changed_tab_and_update_lines(self, event=None):
         # Handle text modification
         if event and str(event.type) == "Modified":
-            if self.text_area.edit_modified():
-                if not self.text_changed: # Mark changed only once until saved
-                    self.text_changed = True
-                    self.update_tab_title()
-            self.text_area.edit_modified(False) # Reset Tkinter's internal modified flag
+            # Only process if text area is not disabled (i.e., not in read-only filtered view)
+            if self.text_area.cget("state") == tk.NORMAL:
+                if self.text_area.edit_modified():
+                    if not self.text_changed: # Mark changed only once until saved
+                        self.text_changed = True
+                        self.update_tab_title() # This will add '*'
+                self.text_area.edit_modified(False) # Reset Tkinter's internal modified flag
+            else: # Text area is disabled, likely due to filtering. Programmatic changes don't set 'text_changed'.
+                 self.text_area.edit_modified(False) # Still reset this internal Tk flag
 
         # Always redraw line numbers on any relevant event (Modified, Configure)
         # Using after(1) to ensure text_area layout is updated before redrawing
@@ -157,27 +161,24 @@ class EditorTab:
         self.current_filter_invert = invert_filter
 
         # Make text area temporarily writable for modifications
-        original_state = self.text_area.cget("state")
-        if original_state == tk.DISABLED:
-            self.text_area.config(state=tk.NORMAL)
+        # original_state = self.text_area.cget("state") # Not needed if we set explicitly
+        self.text_area.config(state=tk.NORMAL) # Always make normal before changing content
 
         if not filter_str:  # Filter is empty, restore original text if needed
             if self.is_filtered_view and self.original_text_for_filter is not None:
-                # print(f"DEBUG: Restoring original text. Length: {len(self.original_text_for_filter)}")
-                current_insert = self.text_area.index(tk.INSERT) # Try to save cursor
+                current_insert = self.text_area.index(tk.INSERT)
                 self.text_area.delete("1.0", tk.END)
                 self.text_area.insert("1.0", self.original_text_for_filter)
                 self.original_text_for_filter = None
                 self.is_filtered_view = False
                 try:
-                    self.text_area.mark_set(tk.INSERT, current_insert) # Try to restore
+                    self.text_area.mark_set(tk.INSERT, current_insert)
                     self.text_area.see(current_insert)
                 except tk.TclError:
-                    self.text_area.mark_set(tk.INSERT, "1.0") # Fallback
-            # else: not in filtered view or no original text to restore
+                    self.text_area.mark_set(tk.INSERT, "1.0")
+            # Text area remains NORMAL if filter is cleared
         else:  # Filter is active
             if not self.is_filtered_view:
-                # Store original text only when switching from non-filtered to filtered view
                 self.original_text_for_filter = self.text_area.get("1.0", tk.END + "-1c")
                 self.is_filtered_view = True
 
@@ -202,14 +203,9 @@ class EditorTab:
             self.text_area.delete("1.0", tk.END)
             if matching_lines:
                 self.text_area.insert("1.0", "".join(matching_lines))
-            # print(f"DEBUG: Filtered. Displaying {len(matching_lines)} lines.")
 
-        # Restore original text area state if it was disabled (e.g. for read-only filtered view)
-        # For now, we are keeping it NORMAL. If we make it DISABLED when filtered:
-        # if self.is_filtered_view:
-        #     self.text_area.config(state=tk.DISABLED)
-        # else:
-        #     self.text_area.config(state=tk.NORMAL) # Ensure it's normal if not filtered
+            self.text_area.config(state=tk.DISABLED) # Make filtered view read-only
+            # print(f"DEBUG: Filtered. Displaying {len(matching_lines)} lines. State: DISABLED")
 
         # Refresh UI elements that depend on text content
         self.redraw_line_numbers()
@@ -917,16 +913,24 @@ class TextEditor:
 
             # If filter bar is visible, apply its current settings to the new tab
             if self.filter_bar_frame.winfo_ismapped():
-                self.on_filter_settings_changed() # This will apply to the new current_tab
+                self.on_filter_settings_changed()
+
+            # Update Find/Replace button states if dialog is open
+            if hasattr(self, "find_replace_dialog") and self.find_replace_dialog.winfo_exists():
+                self.update_find_replace_button_states()
 
 
     def on_filter_settings_changed(self, *args):
         # This method is called when filter text or case sensitivity changes
         if not self.filter_bar_frame.winfo_ismapped():
-            # If the filter bar isn't visible, but a trace fires (e.g. from toggle_filter_bar clearing text),
-            # ensure filter is cleared from tab if it was active.
-            # However, toggle_filter_bar already handles this.
-            # This method should primarily act if the bar is visible and user is interacting.
+            # If filter bar is hidden, traces might still fire if vars are changed programmatically.
+            # We only want to filter if the bar is visible and user is interacting, OR if toggle_filter_bar clears it.
+            # toggle_filter_bar handles its case by setting filter_text_var to "" which then calls this.
+            # So, if bar is not mapped, and filter_text_var is now empty, it means we need to clear filter.
+            if not self.filter_text_var.get(): # If filter text is empty (e.g. cleared by hiding bar)
+                current_tab = self.get_current_tab()
+                if current_tab and current_tab.is_filtered_view: # If tab was filtered
+                     current_tab.apply_text_filter("", self.filter_case_var.get(), self.filter_invert_var.get())
             return
 
         current_tab = self.get_current_tab()
@@ -935,6 +939,10 @@ class TextEditor:
             case_sens = self.filter_case_var.get()
             invert = self.filter_invert_var.get()
             current_tab.apply_text_filter(filter_str, case_sens, invert)
+
+            # Update Find/Replace button states if dialog is open
+            if hasattr(self, "find_replace_dialog") and self.find_replace_dialog.winfo_exists():
+                self.update_find_replace_button_states()
 
 
     def update_status_bar(self):
@@ -1042,9 +1050,18 @@ class TextEditor:
             return self.save_as_file()
 
         try:
-            content = current_tab.get_content()
+            if current_tab.is_filtered_view and current_tab.original_text_for_filter is not None:
+                content_to_save = current_tab.original_text_for_filter
+                # print(f"DEBUG: Saving original_text_for_filter for {current_tab.current_file}")
+            else:
+                content_to_save = current_tab.get_content() # Gets from text_area
+                # print(f"DEBUG: Saving text_area content for {current_tab.current_file}")
+
             with open(current_tab.current_file, "w", encoding="utf-8") as f:
-                f.write(content)
+                f.write(content_to_save)
+
+            # Regardless of what was saved (original or current view), if save is successful,
+            # the document represented by current_tab.current_file is now considered saved.
             current_tab.text_changed = False
             current_tab.text_area.edit_modified(False)
             current_tab.update_tab_title()
@@ -1500,10 +1517,18 @@ class TextEditor:
         button_frame = ttk.Frame(main_dialog_frame) # Pack into main_dialog_frame
         button_frame.pack(pady=10, fill=tk.X) # Removed padx from here
 
-        ttk.Button(button_frame, text="Find Next", command=self.find_next).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Replace", command=self.replace_once).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Replace All", command=self.replace_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        self.find_dialog_find_next_btn = ttk.Button(button_frame, text="Find Next", command=self.find_next)
+        self.find_dialog_find_next_btn.pack(side=tk.LEFT, padx=5)
+
+        self.find_dialog_replace_btn = ttk.Button(button_frame, text="Replace", command=self.replace_once)
+        self.find_dialog_replace_btn.pack(side=tk.LEFT, padx=5)
+
+        self.find_dialog_replace_all_btn = ttk.Button(button_frame, text="Replace All", command=self.replace_all)
+        self.find_dialog_replace_all_btn.pack(side=tk.LEFT, padx=5)
+
+        self.find_dialog_close_btn = ttk.Button(button_frame, text="Close", command=on_dialog_close) # Use on_dialog_close
+        self.find_dialog_close_btn.pack(side=tk.RIGHT, padx=5)
+
 
         # Populate find_entry from selection if any
         text_area = self.get_active_text_area()
@@ -1555,12 +1580,25 @@ class TextEditor:
         dialog.bind("<Escape>", on_dialog_close)
         dialog.protocol("WM_DELETE_WINDOW", on_dialog_close) # Handle window close button
 
+        self.update_find_replace_button_states() # Initial state update
+
         # Center dialog
         dialog.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
         dialog.geometry(f'+{x}+{y}')
         return "break"
+
+    def update_find_replace_button_states(self):
+        if hasattr(self, "find_replace_dialog") and self.find_replace_dialog.winfo_exists():
+            current_tab = self.get_current_tab()
+            if current_tab and current_tab.text_area.cget('state') == tk.DISABLED:
+                self.find_dialog_replace_btn.config(state=tk.DISABLED)
+                self.find_dialog_replace_all_btn.config(state=tk.DISABLED)
+            else:
+                self.find_dialog_replace_btn.config(state=tk.NORMAL)
+                self.find_dialog_replace_all_btn.config(state=tk.NORMAL)
+        # If dialog doesn't exist, or buttons not created yet, do nothing.
 
     def _search_in_text(self, text_widget, pattern, start_index, end_index, case_sensitive, whole_word, regex, backwards):
         nocase = not case_sensitive
