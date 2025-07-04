@@ -80,6 +80,43 @@ class EditorTab:
         # Detect and apply syntax highlighting based on initial file_path
         self._detect_and_set_language(self.current_file)
 
+        self.text_area.bind("<KeyPress>", self.on_text_area_keypress_filtered, add="+")
+
+
+    def on_text_area_keypress_filtered(self, event):
+        if self.is_filtered_view:
+            # Allow navigation, selection, and copy
+            allowed_keysyms = ["Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next", "Insert"]
+            allowed_control_keysyms = ["a", "A", "c", "C", "x", "X"] # Ctrl+A, Ctrl+C, Ctrl+X (though X is modify)
+                                                                # Ctrl+X (cut) should ideally be blocked if truly read-only.
+                                                                # For now, let's allow it as it's often tied to copy.
+                                                                # A stricter read-only would block X.
+
+            if event.keysym in allowed_keysyms:
+                return # Allow event
+
+            if event.state & 0x0004: # Check if Control key is pressed (mask for Control)
+                if event.keysym.lower() in allowed_control_keysyms:
+                    # Special handling for Ctrl+X (Cut) if we want to block it in filtered view
+                    if event.keysym.lower() == 'x':
+                        # print("DEBUG: Ctrl+X attempted in filtered view - blocking cut")
+                        return "break" # Block cut explicitly
+                    return # Allow Ctrl+A, Ctrl+C
+
+            # Check for printable characters or modifying keys
+            # event.char is empty for non-char keys like BackSpace, Delete, Arrows
+            # event.keysym is the name of the key
+            modifying_keysyms = ["BackSpace", "Delete", "Return", "Tab", "KP_Enter"]
+            if event.char and event.char.isprintable() and not (event.state & 0x0004): # Printable char without Control
+                # print(f"DEBUG: Blocking printable char: '{event.char}' in filtered view")
+                return "break"
+            if event.keysym in modifying_keysyms:
+                # print(f"DEBUG: Blocking modifying keysym: '{event.keysym}' in filtered view")
+                return "break"
+
+            # print(f"DEBUG: Allowed KeyPress in filtered: char='{event.char}', keysym='{event.keysym}', state='{event.state}'")
+        return # Allow event if not filtered or if it's an allowed key
+
 
     def load_file_content(self, filepath):
         try:
@@ -116,15 +153,17 @@ class EditorTab:
     def on_text_changed_tab_and_update_lines(self, event=None):
         # Handle text modification
         if event and str(event.type) == "Modified":
-            # Only process if text area is not disabled (i.e., not in read-only filtered view)
-            if self.text_area.cget("state") == tk.NORMAL:
+            # Only set text_changed flag if not in filtered view and actual user edit occurred
+            if not self.is_filtered_view:
                 if self.text_area.edit_modified():
-                    if not self.text_changed: # Mark changed only once until saved
+                    if not self.text_changed:
                         self.text_changed = True
-                        self.update_tab_title() # This will add '*'
-                self.text_area.edit_modified(False) # Reset Tkinter's internal modified flag
-            else: # Text area is disabled, likely due to filtering. Programmatic changes don't set 'text_changed'.
-                 self.text_area.edit_modified(False) # Still reset this internal Tk flag
+                        self.update_tab_title()
+
+            # Always reset the Tkinter internal modified flag after checking it.
+            # This is important because programmatic changes (like applying filter)
+            # also set this flag, and we need to reset it to correctly detect subsequent user edits.
+            self.text_area.edit_modified(False)
 
         # Always redraw line numbers on any relevant event (Modified, Configure)
         # Using after(1) to ensure text_area layout is updated before redrawing
@@ -160,9 +199,8 @@ class EditorTab:
         self.current_filter_case_sensitive = case_sensitive
         self.current_filter_invert = invert_filter
 
-        # Make text area temporarily writable for modifications
-        # original_state = self.text_area.cget("state") # Not needed if we set explicitly
-        self.text_area.config(state=tk.NORMAL) # Always make normal before changing content
+        # Text area should always be NORMAL now for selection/copy
+        # self.text_area.config(state=tk.NORMAL) # Ensure it's normal before any change
 
         if not filter_str:  # Filter is empty, restore original text if needed
             if self.is_filtered_view and self.original_text_for_filter is not None:
@@ -170,17 +208,18 @@ class EditorTab:
                 self.text_area.delete("1.0", tk.END)
                 self.text_area.insert("1.0", self.original_text_for_filter)
                 self.original_text_for_filter = None
-                self.is_filtered_view = False
+                # self.is_filtered_view remains True until explicitly set by this method's end
                 try:
                     self.text_area.mark_set(tk.INSERT, current_insert)
                     self.text_area.see(current_insert)
                 except tk.TclError:
                     self.text_area.mark_set(tk.INSERT, "1.0")
-            # Text area remains NORMAL if filter is cleared
+            self.is_filtered_view = False # Explicitly set here
+            # self.text_area.config(state=tk.NORMAL) # Ensure it's normal
         else:  # Filter is active
-            if not self.is_filtered_view:
+            if not self.is_filtered_view: # Entering filtered view
                 self.original_text_for_filter = self.text_area.get("1.0", tk.END + "-1c")
-                self.is_filtered_view = True
+            self.is_filtered_view = True # Set filtered view active
 
             source_text_for_filtering = self.original_text_for_filter
             lines = source_text_for_filtering.splitlines(keepends=True) # Keep endings for rejoining
@@ -204,8 +243,9 @@ class EditorTab:
             if matching_lines:
                 self.text_area.insert("1.0", "".join(matching_lines))
 
-            self.text_area.config(state=tk.DISABLED) # Make filtered view read-only
-            # print(f"DEBUG: Filtered. Displaying {len(matching_lines)} lines. State: DISABLED")
+            # Filtered view is no longer set to tk.DISABLED here.
+            # Read-only behavior will be enforced by keypress bindings.
+            # print(f"DEBUG: Filtered. Displaying {len(matching_lines)} lines. State: NORMAL")
 
         # Refresh UI elements that depend on text content
         self.redraw_line_numbers()

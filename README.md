@@ -40,10 +40,17 @@ Jules Text Editor is a multi-tab text editor built with Python and Tkinter, offe
         *   **Join Lines (with ', ')**: Similar to above, but uses a comma followed by a space (\", \") as the separator.
 *   **Search (Search Menu)**:
     *   **Find/Replace Dialog (Ctrl+F)**:
-        *   Find Next, Replace, Replace All. All matches highlighted, current match distinctly.
+        *   Find Next, Replace, Replace All. All matches highlighted, current match distinctly. "Replace" and "Replace All" are disabled if the current view is filtered (read-only).
         *   Options: Case sensitive, Whole word, Regular expression (uses Tkinter's built-in regex capabilities), Wrap around, Search backwards.
         *   Non-modal dialog allows interaction with text while open.
         *   Find field can be pre-populated with selected text.
+*   **View Menu**:
+    *   **Change Font...**: Allows selection of fixed-width fonts, size, and style.
+    *   **Keyword Highlighting...**: Define a list of keywords (pipe-separated) to highlight with distinct pastel colors. Options for case sensitivity and whole-word matching for these keywords.
+    *   **Toggle Filter Bar (Ctrl+Shift+F)**: Shows/hides a filter bar to display only lines matching (or not matching, via "Invert" option) a given text string, with case sensitivity option.
+        *   The filtered view is read-only but allows text selection and copying.
+        *   Saving the document while a filter is active saves the original, unfiltered content.
+        *   Line numbers adjust to be sequential for the visible filtered lines.
 
 ## How to Run
 
