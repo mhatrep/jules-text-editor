@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import tkinter.font as tkfont # Corrected import
 import os
 
 class EditorTab:
@@ -12,20 +13,25 @@ class EditorTab:
         self.frame = ttk.Frame(self.notebook)
         self.frame.pack(fill=tk.BOTH, expand=True)
 
+        self.line_numbers_font = tkfont.Font(family=app_instance.editor_font.cget("family"), size=app_instance.editor_font.cget("size"))
         self.line_numbers = tk.Canvas(self.frame, width=40, bg='lightgrey', highlightthickness=0)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
 
-        self.text_area = tk.Text(self.frame, wrap=tk.WORD, undo=True, yscrollcommand=self.sync_scroll_text)
-        self.text_area.pack(side=tk.LEFT, expand=True, fill=tk.BOTH) # Changed from just pack to side=tk.LEFT
+        self.text_area = tk.Text(self.frame, wrap=tk.WORD, undo=True, yscrollcommand=self.sync_scroll_text, font=app_instance.editor_font)
+        self.text_area.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
 
         self.current_file = file_path
         self.text_changed = False
 
         self.text_area.bind("<<Modified>>", self.on_text_changed_tab_and_update_lines)
         self.text_area.bind("<Configure>", self.on_text_changed_tab_and_update_lines) # Update on resize
-        self.text_area.bind("<MouseWheel>", self.on_scroll_wheel) # For Windows/ някои Linux
+        self.text_area.bind("<MouseWheel>", self.on_scroll_wheel) # For Windows/
         self.text_area.bind("<Button-4>", self.on_scroll_wheel) # For Linux scroll up
         self.text_area.bind("<Button-5>", self.on_scroll_wheel) # For Linux scroll down
+
+        # Bindings for status bar updates
+        self.text_area.bind("<KeyRelease>", self.on_key_or_mouse_release)
+        self.text_area.bind("<ButtonRelease-1>", self.on_key_or_mouse_release) # Left mouse button
 
         # Custom scrollbar that calls our sync method
         self.scrollbar = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.text_area.yview)
@@ -83,7 +89,13 @@ class EditorTab:
         # Always redraw line numbers on any relevant event (Modified, Configure)
         # Using after(1) to ensure text_area layout is updated before redrawing
         self.text_area.after(1, self.redraw_line_numbers)
+        if event and (str(event.type) == "Modified" or str(event.type) == "Configure"):
+            self.app.update_status_bar()
 
+
+    def on_key_or_mouse_release(self, event=None):
+        # This is primarily for updating line/col in status bar
+        self.app.update_status_bar()
 
     def on_scroll_wheel(self, event):
         # This ensures that when the text_area is scrolled by mouse wheel,
@@ -161,10 +173,10 @@ class EditorTab:
 
             # Draw the line number
             # Adjust x to right-align numbers, or fixed position. width-2 for padding from right.
-            self.line_numbers.create_text(38, canvas_y, anchor=tk.NE, text=str(i), font=("TkFixedFont", 10))
+            self.line_numbers.create_text(38, canvas_y, anchor=tk.NE, text=str(i), font=self.line_numbers_font)
 
             i += 1
-            if i > int(self.text_area.index('end-1c').split('.')[0]): # Don't go beyond total lines
+            if i > int(self.text_area.index(f"{tk.END}-1c").split('.')[0]): # Don't go beyond total lines
                  break
 
         # Dynamic width for line numbers canvas (optional, can be complex)
@@ -231,6 +243,18 @@ class TextEditor:
         self.quitting_app = False
         self.tabs = []
 
+        # Default font configuration
+        self.current_font_family = "TkFixedFont" # Default fixed-width font
+        self.current_font_size = 10
+        self.current_font_weight = "normal"
+        self.current_font_slant = "roman"
+        self.editor_font = tkfont.Font(
+            family=self.current_font_family,
+            size=self.current_font_size,
+            weight=self.current_font_weight,
+            slant=self.current_font_slant
+        )
+
         # Create main menu
         self.menu_bar = tk.Menu(self.root)
         self.root.config(menu=self.menu_bar)
@@ -238,11 +262,11 @@ class TextEditor:
         # File menu
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
-        self.file_menu.add_command(label="New", command=self.new_file_action, accelerator="Ctrl+N")
-        self.file_menu.add_command(label="Open...", command=self.open_file_action, accelerator="Ctrl+O")
-        self.file_menu.add_command(label="Save", command=lambda: self.save_file_action(save_as_if_needed=False), accelerator="Ctrl+S")
-        self.file_menu.add_command(label="Save As...", command=lambda: self.save_file_action(save_as_if_needed=True), accelerator="Ctrl+Shift+S")
-        self.file_menu.add_command(label="Close Tab", command=self.close_current_tab_action, accelerator="Ctrl+W")
+        self.file_menu.add_command(label="New", command=self.new_file_action_handler, accelerator="Ctrl+N")
+        self.file_menu.add_command(label="Open...", command=self.open_file_action_handler, accelerator="Ctrl+O")
+        self.file_menu.add_command(label="Save", command=lambda: self.save_action_handler(save_as_if_needed=False), accelerator="Ctrl+S")
+        self.file_menu.add_command(label="Save As...", command=self.save_as_action_handler, accelerator="Ctrl+Shift+S")
+        self.file_menu.add_command(label="Close Tab", command=self.close_current_tab_action_handler, accelerator="Ctrl+W")
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.exit_editor_action)
 
@@ -282,25 +306,45 @@ class TextEditor:
         self.menu_bar.add_cascade(label="Search", menu=self.search_menu)
         self.search_menu.add_command(label="Find/Replace...", command=self.open_find_replace_dialog, accelerator="Ctrl+F")
 
+        # View Menu
+        self.view_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="View", menu=self.view_menu)
+        self.view_menu.add_command(label="Change Font...", command=self.open_font_dialog)
+
 
         # Notebook for tabs
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill=tk.BOTH)
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
+        # Status Bar
+        self.status_bar_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=2)
+        self.status_bar_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.status_label_line_col = ttk.Label(self.status_bar_frame, text="Ln 1, Col 1", width=20)
+        self.status_label_line_col.pack(side=tk.LEFT, padx=5)
+
+        self.status_label_total_lines = ttk.Label(self.status_bar_frame, text="Lines: 1", width=15)
+        self.status_label_total_lines.pack(side=tk.LEFT, padx=5)
+
+        self.status_label_file_path = ttk.Label(self.status_bar_frame, text="File: Untitled", anchor=tk.W) # Anchor W to keep it left aligned if it expands
+        self.status_label_file_path.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        # TODO: Add more labels for file size, encoding if desired later
+
 
         # Create initial tab
-        self.new_file_action()
+        self.new_file_action() # This will also trigger initial status update via on_tab_changed and update_status_bar
         self.update_app_title()
 
 
         # Bind keyboard shortcuts
-        self.root.bind_all("<Control-n>", lambda event: self.new_file_action())
-        self.root.bind_all("<Control-o>", lambda event: self.open_file_action())
-        self.root.bind_all("<Control-s>", lambda event: self.save_file_action(save_as_if_needed=False))
-        self.root.bind_all("<Control-S>", lambda event: self.save_file_action(save_as_if_needed=True)) # Ctrl+Shift+S
-        self.root.bind_all("<Control-w>", lambda event: self.close_current_tab_action())
-        self.root.bind_all("<Control-f>", lambda event: self.open_find_replace_dialog())
+        self.root.bind_all("<Control-n>", self.new_file_action_handler)
+        self.root.bind_all("<Control-o>", self.open_file_action_handler)
+        self.root.bind_all("<Control-s>", lambda event: self.save_action_handler(save_as_if_needed=False))
+        self.root.bind_all("<Control-S>", self.save_as_action_handler) # Ctrl+Shift+S
+        self.root.bind_all("<Control-w>", self.close_current_tab_action_handler)
+        self.root.bind_all("<Control-f>", self.open_find_replace_dialog) # This one already returns "break"
 
 
         # Edit shortcuts (need to be routed to active tab's text_area)
@@ -330,7 +374,32 @@ class TextEditor:
 
     def on_tab_changed(self, event=None):
         self.update_app_title()
-        # Potentially refresh status bar or other UI elements based on new active tab
+        self.update_status_bar() # Update status bar when tab changes
+
+    def update_status_bar(self):
+        current_tab = self.get_current_tab()
+        if current_tab and current_tab.text_area:
+            # Line and Column
+            cursor_pos = current_tab.text_area.index(tk.INSERT)
+            line, col = map(int, cursor_pos.split('.'))
+            self.status_label_line_col.config(text=f"Ln {line}, Col {col + 1}") # Col is 0-indexed
+
+            # Total Lines
+            total_lines = int(current_tab.text_area.index(f"{tk.END}-1c").split('.')[0])
+            self.status_label_total_lines.config(text=f"Lines: {total_lines}")
+
+            # File Path
+            file_path_display = "Untitled"
+            if current_tab.current_file:
+                file_path_display = os.path.basename(current_tab.current_file)
+            self.status_label_file_path.config(text=f"File: {file_path_display}")
+
+            # TODO: Add file size, encoding later
+        else:
+            self.status_label_line_col.config(text="Ln --, Col --")
+            self.status_label_total_lines.config(text="Lines: --")
+            self.status_label_file_path.config(text="File: --")
+
 
     def update_app_title(self):
         current_tab = self.get_current_tab()
@@ -351,59 +420,84 @@ class TextEditor:
         self.notebook.select(new_tab.frame_id()) # Make the new tab active
         new_tab.text_area.focus_set()
         self.update_app_title()
+        self.update_status_bar() # Update for new tab
+
+    def new_file_action_handler(self, event=None):
+        self.new_file_action()
         return "break"
 
-    def open_file_action(self, event=None):
+    # Actual logic methods (return True/False or data, no "break")
+    def new_file_action(self):
+        new_tab = EditorTab(self.notebook, self)
+        self.tabs.append(new_tab)
+        self.notebook.add(new_tab.frame, text="Untitled")
+        self.notebook.select(new_tab.frame_id())
+        new_tab.text_area.focus_set()
+        self.update_app_title()
+        self.update_status_bar()
+
+    def open_file_action_handler(self, event=None):
+        self.open_file_action()
+        return "break"
+
+    def open_file_action(self):
         filepath = filedialog.askopenfilename(
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("Python Files", "*.py"), ("All Files", "*.*")]
         )
         if filepath:
-            # Check if file is already open
             for tab in self.tabs:
                 if tab.current_file == filepath:
                     self.notebook.select(tab.frame_id())
-                    return "break"
+                    self.update_status_bar()
+                    return
 
             new_tab = EditorTab(self.notebook, self, file_path=filepath)
-            if new_tab.current_file: # Check if file loading was successful
+            if new_tab.current_file:
                 self.tabs.append(new_tab)
-                self.notebook.add(new_tab.frame) # Title will be set by new_tab.update_tab_title
-                new_tab.update_tab_title() # Set initial title
+                self.notebook.add(new_tab.frame)
+                new_tab.update_tab_title()
                 self.notebook.select(new_tab.frame_id())
                 new_tab.text_area.focus_set()
-            else: # File loading failed in EditorTab constructor
-                new_tab.frame.destroy() # Clean up the failed tab's frame
+            else:
+                new_tab.frame.destroy()
         self.update_app_title()
+        self.update_status_bar()
+
+    def save_action_handler(self, event=None, save_as_if_needed=True):
+        self.save_file(save_as_if_needed=save_as_if_needed)
         return "break"
 
-    def save_file_action(self, event=None, save_as_if_needed=True):
+    def save_as_action_handler(self, event=None):
+        self.save_as_file()
+        return "break"
+
+    def save_file(self, save_as_if_needed=True): # Renamed from save_file_action
         current_tab = self.get_current_tab()
         if not current_tab:
-            return "break"
+            return False
 
         if not current_tab.current_file or save_as_if_needed:
-            return self.save_as_file_action() # Will call save_file_action internally if path chosen
+            return self.save_as_file()
 
         try:
             content = current_tab.get_content()
             with open(current_tab.current_file, "w", encoding="utf-8") as f:
                 f.write(content)
             current_tab.text_changed = False
-            current_tab.text_area.edit_modified(False) # Reset internal flag
+            current_tab.text_area.edit_modified(False)
             current_tab.update_tab_title()
-            self.update_app_title() # Update main window title as well
+            self.update_app_title()
+            self.update_status_bar()
             return True
         except Exception as e:
             messagebox.showerror("Error Saving File", str(e))
             return False
-        return "break"
 
-
-    def save_as_file_action(self, event=None):
+    def save_as_file(self): # Renamed from save_as_file_action
         current_tab = self.get_current_tab()
         if not current_tab:
-            return "break"
+            return False
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -411,17 +505,36 @@ class TextEditor:
             filetypes=[("Text Files", "*.txt"), ("Python Files", "*.py"), ("All Files", "*.*")]
         )
         if filepath:
-            current_tab.current_file = filepath # Update current_file for the tab
-            return self.save_file_action(save_as_if_needed=False) # Now save it to the new path
-        return False # User cancelled Save As dialog
+            current_tab.current_file = filepath
+            if self.save_file(save_as_if_needed=False): # Call the core save logic
+                # Status bar updated by save_file on success
+                return True
+            else:
+                # current_tab.current_file = None # Optionally revert if save failed. Or keep new path.
+                self.update_status_bar() # Reflect potential path change even if save failed
+                return False
+        self.update_status_bar() # Reflect that dialog was cancelled or path not chosen
+        return False
 
-    def close_current_tab_action(self, event=None):
-        current_tab = self.get_current_tab()
-        if current_tab:
-            current_tab.close_tab() # This will handle unsaved changes and remove from notebook/tabs list
-        # update_app_title will be called by close_tab if successful or if it creates a new tab
+    def close_current_tab_action_handler(self, event=None):
+        self.close_current_tab_action()
         return "break"
 
+    def close_current_tab_action(self):
+        current_tab = self.get_current_tab()
+        closed_successfully = False
+        if current_tab:
+            if current_tab.close_tab():
+                closed_successfully = True
+
+        # update_status_bar is called by on_tab_changed if a new tab is selected,
+        # or if a new "Untitled" tab is created by close_tab.
+        # If the last tab was closed and app is exiting, it doesn't matter.
+        # If last tab closed & new one created, on_tab_changed handles it.
+        # Explicit call here if no tab change occurred but state might need refresh (e.g. last tab closed, app not exiting yet)
+        if not self.tabs and not self.quitting_app: # Edge case: last tab closed, new one should have been made by close_tab
+             pass # Handled by new_file_action called within close_tab
+        self.update_status_bar() # General update after close operation.
 
     def exit_editor_action(self):
         self.quitting_app = True
@@ -1094,6 +1207,121 @@ class TextEditor:
         if self.find_replace_dialog and self.find_replace_dialog.winfo_exists():
              self.find_replace_dialog.lift()
         return "break"
+
+    # --- Font Dialog Methods ---
+    def open_font_dialog(self):
+        if hasattr(self, "font_dialog") and self.font_dialog.winfo_exists():
+            self.font_dialog.lift()
+            self.font_dialog.focus_set()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Choose Font")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        self.font_dialog = dialog
+
+        # Variables
+        font_family_var = tk.StringVar(value=self.current_font_family)
+        font_size_var = tk.IntVar(value=self.current_font_size)
+        font_bold_var = tk.BooleanVar(value=(self.current_font_weight == "bold"))
+        font_italic_var = tk.BooleanVar(value=(self.current_font_slant == "italic"))
+
+        available_families = sorted(list(set(tkfont.families())))
+
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(expand=True, fill=tk.BOTH)
+
+        ttk.Label(main_frame, text="Font Family:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        family_combobox = ttk.Combobox(main_frame, textvariable=font_family_var, values=available_families, state="readonly", width=30)
+        family_combobox.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=2)
+        try:
+            family_combobox.set(self.current_font_family)
+        except tk.TclError:
+            if available_families:
+                font_family_var.set(available_families[0])
+
+        ttk.Label(main_frame, text="Font Size:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        size_spinbox = ttk.Spinbox(main_frame, from_=8, to=72, textvariable=font_size_var, width=5)
+        size_spinbox.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+
+        bold_cb = ttk.Checkbutton(main_frame, text="Bold", variable=font_bold_var)
+        bold_cb.grid(row=2, column=0, sticky=tk.W, pady=2)
+        italic_cb = ttk.Checkbutton(main_frame, text="Italic", variable=font_italic_var)
+        italic_cb.grid(row=2, column=1, sticky=tk.W, pady=2)
+
+        preview_frame = ttk.LabelFrame(main_frame, text="Preview", padding=10)
+        preview_frame.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=10)
+        preview_label = ttk.Label(preview_frame, text="AaBbCcDdEe 123 !@#", font=self.editor_font)
+        preview_label.pack(padx=5, pady=5)
+
+        def update_preview_binding(event=None): # Renamed to avoid conflict
+            self.update_font_preview(preview_label, font_family_var, font_size_var, font_bold_var, font_italic_var)
+
+        family_combobox.bind("<<ComboboxSelected>>", update_preview_binding)
+        size_spinbox.config(command=update_preview_binding)
+        bold_cb.config(command=update_preview_binding)
+        italic_cb.config(command=update_preview_binding)
+
+        self.update_font_preview(preview_label, font_family_var, font_size_var, font_bold_var, font_italic_var)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, columnspan=3, sticky=tk.E, pady=10)
+
+        def on_apply():
+            new_family = font_family_var.get()
+            new_size = font_size_var.get()
+            new_weight = "bold" if font_bold_var.get() else "normal"
+            new_slant = "italic" if font_italic_var.get() else "roman"
+
+            self.apply_new_font(new_family, new_size, new_weight, new_slant)
+            dialog.destroy()
+
+        ttk.Button(button_frame, text="Apply", command=on_apply).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        dialog.grab_set()
+
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f'+{x}+{y}')
+
+    def update_font_preview(self, preview_label, family_var, size_var, bold_var, italic_var):
+        family = family_var.get()
+        try:
+            size = size_var.get()
+            if size < 1: size = 1 # Ensure size is positive
+        except tk.TclError:
+            size = self.current_font_size
+
+        weight = "bold" if bold_var.get() else "normal"
+        slant = "italic" if italic_var.get() else "roman"
+
+        try:
+            preview_font = tkfont.Font(family=family, size=size, weight=weight, slant=slant)
+            preview_label.config(font=preview_font)
+        except tk.TclError as e:
+            # print(f"Error updating font preview: {e}") # For debugging
+            preview_label.config(font=tkfont.Font(family=self.current_font_family, size=self.current_font_size)) # Fallback to current editor font
+
+    def apply_new_font(self, family, size, weight, slant):
+        self.current_font_family = family
+        self.current_font_size = size
+        self.current_font_weight = weight
+        self.current_font_slant = slant
+
+        self.editor_font.config(family=family, size=size, weight=weight, slant=slant)
+
+        new_line_number_font_config = {"family": family, "size": size}
+        # Potentially adjust line number canvas width if font size changes significantly
+        # For now, keep it fixed but update its font.
+
+        for tab in self.tabs:
+            tab.text_area.config(font=self.editor_font)
+            tab.line_numbers_font.config(**new_line_number_font_config)
+            tab.redraw_line_numbers()
 
 
 if __name__ == "__main__":
