@@ -743,26 +743,41 @@ class TextEditor:
         dialog.title("Sort Lines")
         dialog.transient(self.root)
         dialog.grab_set()
-        dialog.geometry("300x200")
+        dialog.geometry("350x300") # Increased size for new options
 
         # Variables
-        sort_order_var = tk.StringVar(value="asc") # asc, desc
-        case_sensitive_var = tk.BooleanVar(value=True)
-        remove_duplicates_var = tk.BooleanVar(value=False)
+        self.sort_type_var = tk.StringVar(value="alpha_asc") # New variable for sort type
+        # Values: "alpha_asc", "alpha_desc", "len_asc", "len_desc", "reverse"
 
-        # UI Elements
-        tk.Label(dialog, text="Sort Order:").pack(pady=5)
-        ttk.Radiobutton(dialog, text="Ascending", variable=sort_order_var, value="asc").pack(anchor=tk.W, padx=20)
-        ttk.Radiobutton(dialog, text="Descending", variable=sort_order_var, value="desc").pack(anchor=tk.W, padx=20)
+        self.case_sensitive_sort_var = tk.BooleanVar(value=True) # Renamed for clarity
+        self.remove_duplicates_sort_var = tk.BooleanVar(value=False) # Renamed for clarity
 
-        ttk.Checkbutton(dialog, text="Case Sensitive", variable=case_sensitive_var).pack(anchor=tk.W, padx=20, pady=5)
-        ttk.Checkbutton(dialog, text="Remove Duplicate Lines", variable=remove_duplicates_var).pack(anchor=tk.W, padx=20, pady=5)
+        # --- UI Elements ---
+        type_frame = ttk.LabelFrame(dialog, text="Sort Type", padding=5)
+        type_frame.pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Radiobutton(type_frame, text="Alphabetical (Ascending)", variable=self.sort_type_var, value="alpha_asc", command=self.update_sort_options_state).pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="Alphabetical (Descending)", variable=self.sort_type_var, value="alpha_desc", command=self.update_sort_options_state).pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="By Length (Shortest First)", variable=self.sort_type_var, value="len_asc", command=self.update_sort_options_state).pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="By Length (Longest First)", variable=self.sort_type_var, value="len_desc", command=self.update_sort_options_state).pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="Reverse Line Order", variable=self.sort_type_var, value="reverse", command=self.update_sort_options_state).pack(anchor=tk.W)
+
+        options_frame = ttk.LabelFrame(dialog, text="Options", padding=5)
+        options_frame.pack(padx=10, pady=5, fill=tk.X)
+
+        self.case_sensitive_checkbox = ttk.Checkbutton(options_frame, text="Case Sensitive", variable=self.case_sensitive_sort_var)
+        self.case_sensitive_checkbox.pack(anchor=tk.W, padx=5)
+
+        self.remove_duplicates_checkbox = ttk.Checkbutton(options_frame, text="Remove Duplicate Lines", variable=self.remove_duplicates_sort_var)
+        self.remove_duplicates_checkbox.pack(anchor=tk.W, padx=5)
+
+        self.update_sort_options_state() # Initial state update
 
         def on_apply():
             self.apply_sort_lines(
-                sort_order_var.get(),
-                case_sensitive_var.get(),
-                remove_duplicates_var.get()
+                self.sort_type_var.get(),
+                self.case_sensitive_sort_var.get(),
+                self.remove_duplicates_sort_var.get()
             )
             dialog.destroy()
 
@@ -779,8 +794,20 @@ class TextEditor:
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
         dialog.geometry(f'+{x}+{y}')
 
+    def update_sort_options_state(self):
+        sort_type = self.sort_type_var.get()
+        if sort_type == "alpha_asc" or sort_type == "alpha_desc":
+            self.case_sensitive_checkbox.config(state=tk.NORMAL)
+            self.remove_duplicates_checkbox.config(state=tk.NORMAL)
+        elif sort_type == "len_asc" or sort_type == "len_desc":
+            self.case_sensitive_checkbox.config(state=tk.DISABLED)
+            self.remove_duplicates_checkbox.config(state=tk.NORMAL) # Duplicates can still be relevant
+        elif sort_type == "reverse":
+            self.case_sensitive_checkbox.config(state=tk.DISABLED)
+            self.remove_duplicates_checkbox.config(state=tk.DISABLED)
 
-    def apply_sort_lines(self, order, case_sensitive, remove_duplicates):
+
+    def apply_sort_lines(self, sort_type, case_sensitive, remove_duplicates):
         text_area = self.get_active_text_area()
         if not text_area:
             return
@@ -816,11 +843,17 @@ class TextEditor:
         if not lines: # No lines to sort (empty selection or empty document)
             return
 
-        if remove_duplicates:
-            if case_sensitive:
+        # Handle "Remove Duplicates" first if applicable and enabled for the sort type
+        if remove_duplicates and sort_type not in ["reverse"]:
+            # For alphabetical sort, case sensitivity for duplicates matters.
+            # For length sort, duplicates are based on exact content.
+            is_alpha_sort = sort_type.startswith("alpha")
+            use_case_for_duplicates = case_sensitive if is_alpha_sort else True # Length sort duplicates are case sensitive
+
+            if use_case_for_duplicates:
                 seen = set()
                 unique_lines = [line for line in lines if not (line in seen or seen.add(line))]
-            else:
+            else: # Case-insensitive duplicate removal (only for alphabetical)
                 seen_lower = set()
                 unique_lines = []
                 for line in lines:
@@ -830,9 +863,18 @@ class TextEditor:
                         seen_lower.add(lower_line)
             lines = unique_lines
 
-
-        sort_key = str if case_sensitive else lambda s: s.lower()
-        lines.sort(key=sort_key, reverse=(order == "desc"))
+        # Apply sort based on type
+        if sort_type == "alpha_asc":
+            lines.sort(key=lambda s: s.lower() if not case_sensitive else s)
+        elif sort_type == "alpha_desc":
+            lines.sort(key=lambda s: s.lower() if not case_sensitive else s, reverse=True)
+        elif sort_type == "len_asc":
+            lines.sort(key=len)
+        elif sort_type == "len_desc":
+            lines.sort(key=len, reverse=True)
+        elif sort_type == "reverse":
+            lines.reverse()
+        # Else: no change, or unknown sort_type
 
         sorted_text = "\n".join(lines)
 
