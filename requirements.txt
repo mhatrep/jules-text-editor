@@ -1,0 +1,4 @@
+PyYAML>=6.0
+requests>=2.20.0
+mo-sql-parsing>=9.5.0
+openpyxl>=3.0.0
