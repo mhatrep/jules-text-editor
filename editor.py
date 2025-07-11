@@ -38,7 +38,7 @@ from dialogs.flow_diagram_dialog import FlowDiagramDialog
 from dialogs.quick_text_dialog import QuickTextDialog
 
 class EditorTab:
-    def __init__(self, notebook_widget, app_instance, file_path=None):
+    def __init__(self, notebook_widget, app_instance, file_path=None, default_title="Untitled"): # Added default_title
         self.app = app_instance
         self.notebook = notebook_widget
         self.frame = ttk.Frame(self.notebook, padding=2)
@@ -89,8 +89,13 @@ class EditorTab:
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text_area.config(yscrollcommand=self.sync_scroll_text)
         self.redraw_line_numbers()
-        if file_path: self.load_file_content(file_path)
-        else: self.update_tab_title()
+
+        self.default_title = default_title # Store default title
+        if file_path:
+            self.load_file_content(file_path)
+        else:
+            self.update_tab_title() # This will use self.default_title if current_file is None
+
         self.apply_keyword_highlights(self.app.keyword_highlight_settings)
         self._detect_and_set_language(self.current_file)
         self.text_area.bind("<KeyPress>", self.on_text_area_keypress_filtered, add="+")
@@ -135,7 +140,8 @@ class EditorTab:
             self.close_tab(check_save=False)
 
     def update_tab_title(self):
-        tab_text = os.path.basename(self.current_file) if self.current_file else "Untitled"
+        # Use self.default_title if current_file is None, otherwise use basename
+        tab_text = os.path.basename(self.current_file) if self.current_file else self.default_title
         if self.text_changed: tab_text = "*" + tab_text
         try:
             current_tabs = self.notebook.tabs()
@@ -422,6 +428,7 @@ class TextEditor:
         self.root.geometry("800x600")
         self.quitting_app = False
         self.tabs = []
+        self.untitled_counter = 1 # Added counter for untitled tabs
         self.show_line_numbers = True
         self.notes_style_active = False
         self._is_updating_filter_bar_from_tab = False
@@ -609,6 +616,9 @@ class TextEditor:
         self.tools_menu.add_command(label="Excel to CSVs & Stats...", command=self.open_excel_to_csv_stats_dialog)
         self.tools_menu.add_command(label="URL Manager...", command=self.open_url_manager_dialog)
         self.tools_menu.add_separator()
+        # self.tools_menu.add_command(label="Certificate Analyzer...", command=self.open_certificate_analyzer_dialog) # Removed this line
+        self.tools_menu.add_command(label="Security Tool...", command=self.open_security_tool_dialog) # Added this line
+        self.tools_menu.add_separator() # Existing separator, good for grouping
         self.tools_menu.add_command(label="Image Search by Name...", command=self.open_image_search_dialog)
         self.tools_menu.add_command(label="Drawing Tool...", command=self.open_drawing_tool_action)
         self.tools_menu.add_separator()
@@ -769,9 +779,12 @@ class TextEditor:
 
     def new_file_action_handler(self, event=None): self.new_file_action(); return "break"
     def new_file_action(self):
-        new_tab = EditorTab(self.notebook, self)
+        default_tab_name = f"Untitled {self.untitled_counter}"
+        new_tab = EditorTab(self.notebook, self, default_title=default_tab_name) # Pass default_title
         self.tabs.append(new_tab)
-        self.notebook.add(new_tab.frame, text="Untitled")
+        # The EditorTab's update_tab_title will now use default_tab_name initially
+        self.notebook.add(new_tab.frame, text=default_tab_name)
+        self.untitled_counter += 1 # Increment counter
         self.notebook.select(new_tab.frame_id())
         new_tab.text_area.focus_set()
         self.update_app_title()
@@ -821,17 +834,42 @@ class TextEditor:
     def save_as_file(self):
         current_tab = self.get_current_tab()
         if not current_tab: return False
-        filepath = filedialog.asksaveasfilename(defaultextension=".txt", initialfile=os.path.basename(current_tab.current_file) if current_tab.current_file else "Untitled.txt", filetypes=[("Text Files", "*.txt"), ("Python Files", "*.py"), ("All Files", "*.*")])
+
+        # Determine initial filename for the dialog
+        if current_tab.current_file:
+            initial_filename = os.path.basename(current_tab.current_file)
+        else:
+            # Use the tab's default_title (e.g., "Untitled 1") and add .txt extension
+            initial_filename = f"{current_tab.default_title}.txt"
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=initial_filename,
+            filetypes=[("Text Files", "*.txt"), ("Python Files", "*.py"), ("All Files", "*.*")]
+        )
         if filepath:
             current_tab.current_file = filepath
-            if self.save_file(save_as_if_needed=False):
+            # self.save_file() will call current_tab.update_tab_title() and self.update_app_title()
+            save_successful = self.save_file(save_as_if_needed=False)
+
+            if save_successful:
                 current_tab._detect_and_set_language(filepath)
+                # Explicitly update titles here to ensure it happens after all file operations in save_as_file
+                current_tab.update_tab_title()
+                self.update_app_title()
+                self.update_status_bar() # Also ensure status bar is current
                 return True
             else:
-                current_tab._detect_and_set_language(filepath)
+                # If save_file failed (e.g. permission error during write, though save_file has its own error dialog)
+                # For now, just ensure status bar is updated if it failed.
+                current_tab.current_file = None # Revert if save failed after path was set
+                current_tab.update_tab_title() # Revert tab title to Untitled X
+                self.update_app_title()
                 self.update_status_bar()
                 return False
-        self.update_status_bar()
+
+        # If filepath is None (dialog cancelled)
+        self.update_status_bar() # Ensure status bar is up-to-date
         return False
 
     def close_current_tab_action_handler(self, event=None): self.close_current_tab_action(); return "break"
@@ -1298,6 +1336,19 @@ class TextEditor:
         dialog = DrawingDialog(self)
         return "break"
 
+    # def open_certificate_analyzer_dialog(self, event=None): # Method removed
+    #     dialog = CertificateAnalyzerDialog(self.root)
+    #     dialog.grab_set()
+    #     return "break"
+
+    def open_security_tool_dialog(self, event=None): # New method
+        dialog = SecurityToolDialog(self.root)
+        # grab_set() might be called by SecurityToolDialog itself if it's always modal,
+        # or we can set it here if we want to enforce modality from the editor.
+        # For a multi-functional tool, it might not be modal itself, but its sub-dialogs would be.
+        # Let's assume SecurityToolDialog manages its own modality or is not modal.
+        return "break"
+
 # Removed DrawingDialog class
 # Removed DrawingDialog class
 # Removed ExcelToCsvStatsDialog class definition
@@ -1310,6 +1361,8 @@ from dialogs.excel_to_html_dialog import ExcelToHtmlDialog
 from dialogs.sql_parser_dialog import SqlParserDialog
 # Removed RestApiClientDialog class definition
 from dialogs.rest_api_client_dialog import RestApiClientDialog
+# from dialogs.certificate_analyzer_dialog import CertificateAnalyzerDialog # Commented out - now part of SecurityToolDialog
+from dialogs.security_tool_dialog import SecurityToolDialog # Added this import
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk()
