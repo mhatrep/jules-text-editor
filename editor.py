@@ -476,10 +476,13 @@ class TextEditor:
         self.world_clock_frame = ttk.Frame(self.root, relief=tk.FLAT, padding=(5,2))
         self.world_clock_frame.pack(side=tk.TOP, fill=tk.X, pady=(0,2))
         self.timezones_to_display = [
-            {"label": "NYC (ET):", "tz": "America/New_York"},
-            {"label": "IST:", "tz": "Asia/Kolkata"},
-            {"label": "JST:", "tz": "Asia/Tokyo"},
-            {"label": "UTC:", "tz": "UTC"}
+            {"label": "New York (ET):", "tz": "America/New_York"},
+            {"label": "Chicago (CT):",  "tz": "America/Chicago"},
+            {"label": "Los Angeles (PT):", "tz": "America/Los_Angeles"},
+            {"label": "London, UK:",     "tz": "Europe/London"},
+            {"label": "Kolkata, India (IST):","tz": "Asia/Kolkata"},
+            {"label": "Tokyo, Japan (JST):",  "tz": "Asia/Tokyo"},
+            {"label": "UTC:",            "tz": "Etc/UTC"},
         ]
         self.world_clock_labels = []
         self._initialize_world_clocks()
