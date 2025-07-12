@@ -36,6 +36,7 @@ from dialogs.image_search_dialog import ImageSearchDialog
 from dialogs.flow_diagram_dialog import FlowDiagramDialog
 # Removed QuickTextDialog class definition
 from dialogs.quick_text_dialog import QuickTextDialog
+from dialogs.list_comparison_results_dialog import ListComparisonResultsDialog
 
 class EditorTab:
     def __init__(self, notebook_widget, app_instance, file_path=None, default_title="Untitled"): # Added default_title
@@ -1027,16 +1028,267 @@ class TextEditor:
     def apply_filter_lines_by_regex(self, regex_str: str, case_insensitive: bool, action_mode: str): pass
     def update_sort_options_state(self): pass
     def apply_sort_lines(self, sort_type, case_sensitive, remove_duplicates): pass
-    def open_find_replace_dialog(self, event=None): pass
-    def update_find_replace_button_states(self): pass
-    def _search_in_text(self, text_widget, pattern, start_index, end_index, case_sensitive, whole_word, regex, backwards): return None,0
-    def find_next(self, event=None): pass
-    def replace_once(self, event=None): pass
-    def replace_all(self, event=None): pass
-    def clear_all_search_highlights_active_tab(self): pass
-    def clear_current_search_highlight_active_tab(self): pass
-    def refresh_search_highlights(self): pass
-    def navigate_to_match(self, match_index, is_initial_find=False): pass
+
+    # --- Find/Replace Functionality (now largely managed by FindReplaceDialog) ---
+    def open_find_replace_dialog(self, event=None):
+        if not hasattr(self, 'find_replace_dialog_instance') or \
+           not self.find_replace_dialog_instance or \
+           not self.find_replace_dialog_instance.winfo_exists():
+            from dialogs.find_replace_dialog import FindReplaceDialog # Local import if preferred
+            self.find_replace_dialog_instance = FindReplaceDialog(self)
+        self.find_replace_dialog_instance.show() # Handles deiconify, lift, focus
+        return "break"
+
+    def _search_in_text(self, text_widget, pattern, start_index, end_index, case_sensitive, whole_word, regex, backwards):
+        """
+        Performs a search operation in the given text_widget.
+        Returns (match_start_index, match_length) or (None, 0) if not found.
+        """
+        if not pattern:
+            return None, 0
+
+        search_flags = tk.SEL_FIRST # Placeholder, not used by text.search
+        count_var = tk.IntVar()
+
+        if backwards:
+            # text_widget.search is not ideal for true 'find previous' from current cursor.
+            # A more robust solution would involve searching from 1.0 up to current cursor,
+            # then taking the last match. This is a simplified find_next backwards from end_index.
+            pos = text_widget.search(pattern, start_index, stopindex=end_index,
+                                     nocase=not case_sensitive, regexp=regex, backwards=True, count=count_var)
+        else:
+            pos = text_widget.search(pattern, start_index, stopindex=end_index,
+                                     nocase=not case_sensitive, regexp=regex, count=count_var)
+
+        if pos:
+            match_len = count_var.get()
+            if match_len == 0 and len(pattern) > 0 and not regex: # Non-regex exact match might return 0 if exact flag not used
+                match_len = len(pattern)
+            # Ensure pos is a valid index string like "line.char"
+            # Example: pos might be "3.4"
+            return pos, match_len
+        return None, 0
+
+    def find_next_action_from_dialog(self, find_what, case_sensitive, whole_word, regex, search_backwards=False):
+        current_tab = self.get_current_tab()
+        if not current_tab or not find_what:
+            if self.find_replace_dialog_instance:
+                self.find_replace_dialog_instance.update_search_results([], -1, "Not found")
+            return
+
+        text_area = current_tab.text_area
+
+        # If this is a new search (dialog's current_matches is empty or find_what/options changed)
+        # This logic will be refined in the dialog itself based on its state.
+        # For now, assume the dialog manages when to clear self.find_replace_dialog_instance.current_matches
+
+        dialog = self.find_replace_dialog_instance
+        is_new_search = not dialog.current_matches or \
+                        dialog.last_find_what != find_what or \
+                        dialog.last_case_sensitive != case_sensitive or \
+                        dialog.last_whole_word != whole_word or \
+                        dialog.last_regex != regex
+
+        if is_new_search:
+            dialog.current_matches = []
+            dialog.current_match_index = -1
+            self.clear_all_search_highlights_active_tab() # Clear old highlights
+
+            # Store current search parameters in dialog for future checks
+            dialog.last_find_what = find_what
+            dialog.last_case_sensitive = case_sensitive
+            dialog.last_whole_word = whole_word
+            dialog.last_regex = regex
+
+            # Populate all matches
+            current_pos = "1.0"
+            while True:
+                match_pos, match_len = self._search_in_text(text_area, find_what, current_pos, tk.END,
+                                                            case_sensitive, whole_word, regex, False)
+                if match_pos and match_len > 0:
+                    end_pos = text_area.index(f"{match_pos}+{match_len}c")
+                    dialog.current_matches.append((match_pos, end_pos))
+                    current_pos = end_pos
+                else:
+                    break
+
+            if dialog.current_matches:
+                dialog.current_match_index = 0 # Start with the first match
+            else: # No matches found at all
+                dialog.update_search_results([], -1, "Not found")
+                return
+        else: # Existing search, find next/previous
+            if not dialog.current_matches: # Should not happen if not new_search, but safeguard
+                dialog.update_search_results([], -1, "Not found")
+                return
+
+            if search_backwards:
+                dialog.current_match_index -= 1
+                if dialog.current_match_index < 0:
+                    dialog.current_match_index = len(dialog.current_matches) - 1 # Wrap around
+            else:
+                dialog.current_match_index += 1
+                if dialog.current_match_index >= len(dialog.current_matches):
+                    dialog.current_match_index = 0 # Wrap around
+
+        if 0 <= dialog.current_match_index < len(dialog.current_matches):
+            self.navigate_to_match_from_dialog(dialog.current_match_index)
+            # Status update will be handled by navigate_to_match_from_dialog or dialog itself
+        else: # Should be caught by wrap around, but as a fallback
+             dialog.update_search_results(dialog.current_matches, -1, "Not found")
+
+
+    def replace_action_from_dialog(self, find_what, replace_with, case_sensitive, whole_word, regex):
+        current_tab = self.get_current_tab()
+        dialog = self.find_replace_dialog_instance
+        if not current_tab or not dialog or dialog.current_match_index == -1:
+            if dialog: dialog.update_search_results(dialog.current_matches, dialog.current_match_index, "No match selected")
+            return
+
+        text_area = current_tab.text_area
+        try:
+            # Get current highlighted match details from dialog's state
+            start_index, end_index = dialog.current_matches[dialog.current_match_index]
+
+            # Verify the content at start_index still matches find_what (in case of external changes)
+            # This is a simplified check. A more robust check would re-search just that segment.
+            selected_text = text_area.get(start_index, end_index)
+
+            # Re-check if current selection matches search criteria before replacing
+            # This is important if regex is used, as selected_text might not be identical to find_what pattern
+            # For simplicity, we assume if it's in current_matches, it's valid.
+            # A more robust check would involve re-running _search_in_text on the specific segment.
+
+            text_area.delete(start_index, end_index)
+            text_area.insert(start_index, replace_with)
+            text_area.event_generate("<<Modified>>")
+
+            # After replacing, the highlights and match list are invalid for this position
+            # Option 1: Re-find all and navigate (could be slow for large files)
+            # Option 2: Remove this match, adjust subsequent match indices (complex)
+            # Option 3: For simplicity, just find the *next* logical match from replacement end
+
+            # Invalidate current highlights and matches before finding next
+            # The dialog's find_next will repopulate if needed or move to next valid
+            dialog.current_matches.pop(dialog.current_match_index)
+            # Adjust indices of subsequent matches (if any) due to length difference of replacement
+            # This is complex; for now, we will re-trigger a find or clear and let user find next.
+            # A simpler approach for now: clear highlights and let find_next re-evaluate.
+            self.clear_all_search_highlights_active_tab()
+
+
+            # If there were more matches, try to adjust current_match_index.
+            # If current_match_index was last, it becomes -1 (or wraps to 0 if any left).
+            if not dialog.current_matches:
+                dialog.current_match_index = -1
+                dialog.update_search_results([], -1, "Replaced. No more matches.")
+            elif dialog.current_match_index >= len(dialog.current_matches): # If it was the last one
+                dialog.current_match_index = 0 # Go to first if any left (or could be len-1 to stay near)
+                self.navigate_to_match_from_dialog(dialog.current_match_index)
+            else: # Still matches at or after current index (after pop)
+                 self.navigate_to_match_from_dialog(dialog.current_match_index)
+
+            # Alternative: after replace, just call find_next_action_from_dialog to re-search from current point
+            # self.find_next_action_from_dialog(find_what, case_sensitive, whole_word, regex)
+
+        except tk.TclError as e:
+            if dialog: dialog.update_search_results(dialog.current_matches, dialog.current_match_index, f"Error: {e}")
+        except IndexError: # current_match_index might be out of bounds if list modified unexpectedly
+            if dialog: dialog.update_search_results([], -1, "Error: Match list desynchronized.")
+
+
+    def replace_all_action_from_dialog(self, find_what, replace_with, case_sensitive, whole_word, regex):
+        current_tab = self.get_current_tab()
+        if not current_tab or not find_what:
+            if self.find_replace_dialog_instance:
+                self.find_replace_dialog_instance.update_search_results([], -1, "Not found")
+            return 0
+
+        text_area = current_tab.text_area
+        self.clear_all_search_highlights_active_tab() # Clear existing highlights first
+
+        count = 0
+        current_pos = "1.0"
+        original_text_changed_flag = current_tab.text_changed # Preserve original flag
+
+        text_area.config(undo=False) # Disable undo temporarily for performance
+        try:
+            while True:
+                match_pos, match_len = self._search_in_text(text_area, find_what, current_pos, tk.END,
+                                                            case_sensitive, whole_word, regex, False)
+                if match_pos and match_len > 0:
+                    end_pos = text_area.index(f"{match_pos}+{match_len}c")
+                    text_area.delete(match_pos, end_pos)
+                    text_area.insert(match_pos, replace_with)
+                    count += 1
+                    current_pos = text_area.index(f"{match_pos}+{len(replace_with)}c") # Continue search after the replaced text
+                    if not current_pos: break # Should not happen if insert was successful
+                else:
+                    break
+        finally:
+            text_area.config(undo=True) # Re-enable undo
+
+        if count > 0:
+            text_area.event_generate("<<Modified>>") # Trigger a single modification event
+            current_tab.text_changed = True # Mark as changed
+            current_tab.update_tab_title()
+
+        if self.find_replace_dialog_instance:
+            self.find_replace_dialog_instance.update_search_results([], -1, f"Replaced {count} occurrence(s).")
+            # Since all replaced, clear current match list in dialog
+            self.find_replace_dialog_instance.current_matches = []
+            self.find_replace_dialog_instance.current_match_index = -1
+
+        self.update_status_bar() # Update line counts, etc.
+        return count
+
+    def clear_all_search_highlights_active_tab(self):
+        current_tab = self.get_current_tab()
+        if current_tab:
+            try:
+                current_tab.text_area.tag_remove("search_highlight", "1.0", tk.END)
+            except tk.TclError: pass # Ignore if tag doesn't exist or text area is gone
+
+    def clear_current_search_highlight_active_tab(self):
+        current_tab = self.get_current_tab()
+        if current_tab:
+            try:
+                current_tab.text_area.tag_remove("current_search_highlight", "1.0", tk.END)
+            except tk.TclError: pass
+
+    def navigate_to_match_from_dialog(self, match_idx_in_dialog_list):
+        current_tab = self.get_current_tab()
+        dialog = self.find_replace_dialog_instance
+        if not current_tab or not dialog or not dialog.current_matches or \
+           not (0 <= match_idx_in_dialog_list < len(dialog.current_matches)):
+            if dialog: dialog.update_search_results(dialog.current_matches, dialog.current_match_index, "Invalid match index")
+            return
+
+        text_area = current_tab.text_area
+        self.clear_current_search_highlight_active_tab() # Clear previous current highlight
+
+        # Highlight all matches with 'search_highlight'
+        for start_idx, end_idx in dialog.current_matches:
+            try: text_area.tag_add("search_highlight", start_idx, end_idx)
+            except tk.TclError: pass # Ignore if index is bad (e.g. after edits)
+
+        # Highlight the current match with 'current_search_highlight'
+        current_start_idx, current_end_idx = dialog.current_matches[match_idx_in_dialog_list]
+        try:
+            text_area.tag_add("current_search_highlight", current_start_idx, current_end_idx)
+            text_area.see(current_start_idx) # Scroll to the match
+            text_area.mark_set(tk.INSERT, current_start_idx) # Move cursor to match start
+            dialog.current_match_index = match_idx_in_dialog_list # Update dialog's current index
+            dialog.update_search_results(dialog.current_matches, match_idx_in_dialog_list) # Update status label
+        except tk.TclError: # Index might be bad if text changed significantly
+            if dialog:
+                dialog.update_search_results(dialog.current_matches, dialog.current_match_index, "Error: Match location invalid")
+                # Consider re-finding all matches if this happens often
+                # dialog._clear_previous_search() # This would force a re-search on next find
+            return
+
+        self.update_status_bar() # To update cursor position display
+
     def open_font_dialog(self): pass
     def update_font_preview(self, preview_label, family_var, size_var, bold_var, italic_var): pass
     def apply_new_font(self, family, size, weight, slant): pass
@@ -1066,8 +1318,32 @@ class TextEditor:
     def csv_to_text_table_action(self, event=None): pass
     def apply_extract_pattern(self, regex_pattern_str: str, case_insensitive: bool, unique_only: bool): pass
     def open_compare_lists_dialog(self, event=None): pass
-    def _perform_and_show_list_comparison(self, list1_str: str, list2_str: str, case_sensitive: bool): pass
-    def _show_list_comparison_results(self, common_lines, list1_unique, list2_unique, case_sensitive_used): pass
+
+    def _perform_and_show_list_comparison(self, list1_str: str, list2_str: str, case_sensitive: bool):
+        list1_lines = [line for line in list1_str.splitlines() if line.strip()]
+        list2_lines = [line for line in list2_str.splitlines() if line.strip()]
+
+        if not case_sensitive:
+            list1_map = {line.lower(): line for line in list1_lines}
+            list2_map = {line.lower(): line for line in list2_lines}
+        else:
+            list1_map = {line: line for line in list1_lines}
+            list2_map = {line: line for line in list2_lines}
+
+        set1_keys = set(list1_map.keys())
+        set2_keys = set(list2_map.keys())
+
+        common_keys = set1_keys.intersection(set2_keys)
+        list1_unique_keys = set1_keys.difference(set2_keys)
+        list2_unique_keys = set2_keys.difference(set1_keys)
+
+        # Retrieve original casing for display
+        common_lines_orig_case = sorted([list1_map[k] for k in common_keys])
+        list1_unique_orig_case = sorted([list1_map[k] for k in list1_unique_keys])
+        list2_unique_orig_case = sorted([list2_map[k] for k in list2_unique_keys])
+
+        ListComparisonResultsDialog(self.root, common_lines_orig_case, list1_unique_orig_case, list2_unique_orig_case, case_sensitive)
+
     def _process_selected_lines(self, line_operation_func, preserves_original_endings=True): pass
     def condense_internal_whitespace(self): pass
     def join_lines_with_space(self): pass
