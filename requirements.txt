@@ -8,3 +8,7 @@ tkinterdnd2>=0.3
 PyMuPDF>=1.20.0
 mss>=6.1.0
 cryptography>=3.4.7
+python-docx>=1.1.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+tkcalendar>=1.6.1
