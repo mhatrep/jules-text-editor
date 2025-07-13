@@ -38,6 +38,33 @@ from dialogs.flow_diagram_dialog import FlowDiagramDialog
 from dialogs.quick_text_dialog import QuickTextDialog
 from dialogs.list_comparison_results_dialog import ListComparisonResultsDialog
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event):
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(self.tooltip_window, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("tahoma", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self, event):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+        self.tooltip_window = None
+
 class EditorTab:
     def __init__(self, notebook_widget, app_instance, file_path=None, default_title="Untitled"): # Added default_title
         self.app = app_instance
@@ -514,24 +541,51 @@ class TextEditor:
 
         btn_padx = 3
         btn_pady = 2
-        self.new_btn = ttk.Button(self.toolbar_frame, text="New", command=self.new_file_action_handler)
+        self.new_icon = ImageTk.PhotoImage(Image.open("assets/icons/new-file.png").resize((16, 16)))
+        self.open_icon = ImageTk.PhotoImage(Image.open("assets/icons/open-file.png").resize((16, 16)))
+        self.save_icon = ImageTk.PhotoImage(Image.open("assets/icons/save.png").resize((16, 16)))
+        self.cut_icon = ImageTk.PhotoImage(Image.open("assets/icons/cut.png").resize((16, 16)))
+        self.copy_icon = ImageTk.PhotoImage(Image.open("assets/icons/copy.png").resize((16, 16)))
+        self.paste_icon = ImageTk.PhotoImage(Image.open("assets/icons/paste.png").resize((16, 16)))
+        self.undo_icon = ImageTk.PhotoImage(Image.open("assets/icons/undo.png").resize((16, 16)))
+        self.redo_icon = ImageTk.PhotoImage(Image.open("assets/icons/redo.png").resize((16, 16)))
+        self.format_code_icon = ImageTk.PhotoImage(Image.open("assets/icons/format-code.png").resize((16, 16)))
+        self.calendar_icon = ImageTk.PhotoImage(Image.open("assets/icons/calendar.png").resize((16, 16)))
+
+        self.new_btn = ttk.Button(self.toolbar_frame, image=self.new_icon, command=self.new_file_action_handler)
         self.new_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
-        self.open_btn = ttk.Button(self.toolbar_frame, text="Open", command=self.open_file_action_handler)
+        ToolTip(self.new_btn, "New File")
+        self.open_btn = ttk.Button(self.toolbar_frame, image=self.open_icon, command=self.open_file_action_handler)
         self.open_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
-        self.save_btn = ttk.Button(self.toolbar_frame, text="Save", command=lambda: self.save_action_handler(save_as_if_needed=False))
+        ToolTip(self.open_btn, "Open File")
+        self.save_btn = ttk.Button(self.toolbar_frame, image=self.save_icon, command=lambda: self.save_action_handler(save_as_if_needed=False))
         self.save_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
+        ToolTip(self.save_btn, "Save File")
         ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady)
-        self.cut_btn = ttk.Button(self.toolbar_frame, text="Cut", command=self.cut_action)
+        self.cut_btn = ttk.Button(self.toolbar_frame, image=self.cut_icon, command=self.cut_action)
         self.cut_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
-        self.copy_btn = ttk.Button(self.toolbar_frame, text="Copy", command=self.copy_action)
+        ToolTip(self.cut_btn, "Cut")
+        self.copy_btn = ttk.Button(self.toolbar_frame, image=self.copy_icon, command=self.copy_action)
         self.copy_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
-        self.paste_btn = ttk.Button(self.toolbar_frame, text="Paste", command=self.paste_action)
+        ToolTip(self.copy_btn, "Copy")
+        self.paste_btn = ttk.Button(self.toolbar_frame, image=self.paste_icon, command=self.paste_action)
         self.paste_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
+        ToolTip(self.paste_btn, "Paste")
         ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady)
-        self.undo_btn = ttk.Button(self.toolbar_frame, text="Undo", command=self.undo_action)
+        self.undo_btn = ttk.Button(self.toolbar_frame, image=self.undo_icon, command=self.undo_action)
         self.undo_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
-        self.redo_btn = ttk.Button(self.toolbar_frame, text="Redo", command=self.redo_action)
+        ToolTip(self.undo_btn, "Undo")
+        self.redo_btn = ttk.Button(self.toolbar_frame, image=self.redo_icon, command=self.redo_action)
         self.redo_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
+        ToolTip(self.redo_btn, "Redo")
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady)
+        self.format_code_btn = ttk.Button(self.toolbar_frame, image=self.format_code_icon, command=self.format_code)
+        self.format_code_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
+        ToolTip(self.format_code_btn, "Format Code")
+        self.calendar_btn = ttk.Button(self.toolbar_frame, image=self.calendar_icon, command=self.open_calendar_dialog)
+        self.calendar_btn.pack(side=tk.LEFT, padx=btn_padx, pady=btn_pady)
+        ToolTip(self.calendar_btn, "Calendar")
+        ttk.Separator(self.toolbar_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=btn_pady)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
         self.file_menu.add_command(label="New", command=self.new_file_action_handler, accelerator="Ctrl+N")
@@ -587,53 +641,72 @@ class TextEditor:
         self.format_menu.add_command(label="Shuffle Lines", command=self.shuffle_lines_action)
         self.tools_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Tools", menu=self.tools_menu)
-        self.word_analysis_menu = tk.Menu(self.tools_menu, tearoff=0)
-        self.tools_menu.add_cascade(label="Word Analysis", menu=self.word_analysis_menu)
-        self.word_analysis_menu.add_command(label="Count Word Frequency...", command=self.count_word_frequency_action)
-        self.word_analysis_menu.add_command(label="Extract Unique Words...", command=self.extract_unique_words_dialog)
-        self.word_analysis_menu.add_command(label="Extract UPPERCASE Words...", command=self.extract_uppercase_words_action)
-        self.tools_menu.add_command(label="Text Statistics...", command=self.text_statistics_action)
-        self.tools_menu.add_separator()
-        self.regex_utilities_menu = tk.Menu(self.tools_menu, tearoff=0)
-        self.tools_menu.add_cascade(label="Regex Utilities", menu=self.regex_utilities_menu)
-        self.regex_utilities_menu.add_command(label="Extract by Pattern (Regex)...", command=self.extract_pattern_dialog)
-        self.regex_utilities_menu.add_command(label="Keep Lines Matching Regex...", command=lambda: self.filter_lines_by_regex_dialog(action_mode="keep"))
-        self.regex_utilities_menu.add_command(label="Remove Lines Matching Regex...", command=lambda: self.filter_lines_by_regex_dialog(action_mode="remove"))
-        self.tools_menu.add_separator()
-        self.line_filters_menu = tk.Menu(self.tools_menu, tearoff=0)
-        self.tools_menu.add_cascade(label="Line Filters", menu=self.line_filters_menu)
-        self.line_filters_menu.add_command(label="Extract Lines by Length...", command=self.extract_lines_by_length_dialog)
-        self.line_filters_menu.add_command(label="Remove Blank Lines", command=self.remove_all_blank_lines)
-        self.tools_menu.add_separator()
-        self.tools_menu.add_command(label="QuickText Transformer...", command=self.open_quick_text_dialog)
-        self.tools_menu.add_command(label="Create Flow Diagram...", command=self.open_flow_diagram_dialog)
-        self.tools_menu.add_command(label="View Data as Table (JSON/YAML)...", command=self.view_data_as_table_action)
-        self.tools_menu.add_command(label="Convert CSV to Text Table", command=self.csv_to_text_table_action)
-        self.tools_menu.add_command(label="Compare Two Lists...", command=self.open_compare_lists_dialog)
-        self.tools_menu.add_separator()
-        self.tools_menu.add_command(label="REST API Client...", command=self.open_rest_api_client_dialog)
-        self.tools_menu.add_command(label="SQL Parser...", command=self.open_sql_parser_dialog)
-        self.tools_menu.add_command(label="Excel to HTML Site...", command=self.open_excel_to_html_dialog)
-        self.tools_menu.add_command(label="Excel to CSVs & Stats...", command=self.open_excel_to_csv_stats_dialog)
-        self.tools_menu.add_command(label="URL Manager...", command=self.open_url_manager_dialog)
-        self.tools_menu.add_separator()
-        self.tools_menu.add_command(label="Document to Text Converter...", command=self.open_doc_converter_dialog) # New
-        self.tools_menu.add_separator()
-        self.tools_menu.add_command(label="Todo List / Kanban...", command=self.open_todo_manager_dialog) # New Todo/Kanban
-        self.tools_menu.add_separator()
-        # self.tools_menu.add_command(label="Certificate Analyzer...", command=self.open_certificate_analyzer_dialog) # Removed this line
-        self.tools_menu.add_command(label="Security Tool...", command=self.open_security_tool_dialog) # Added this line
-        self.tools_menu.add_separator() # Existing separator, good for grouping
-        self.tools_menu.add_command(label="Image Search by Name...", command=self.open_image_search_dialog)
-        self.tools_menu.add_command(label="Drawing Tool...", command=self.open_drawing_tool_action)
-        self.tools_menu.add_separator()
-        self.tools_menu.add_command(label="PDF Tools...", command=self.open_pdf_tool_dialog)
-        self.tools_menu.add_separator() # Separator before script runner
-        self.tools_menu.add_command(label="Run Script...", command=self.open_script_runner_dialog) # Added Script Runner
-        self.tools_menu.add_separator() # Separator before screenshot tool
 
-        self.screenshot_menu = tk.Menu(self.tools_menu, tearoff=0)
-        self.tools_menu.add_cascade(label="Screenshot Tool", menu=self.screenshot_menu)
+        # Text & Data submenu
+        self.text_data_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.tools_menu.add_cascade(label="Text & Data", menu=self.text_data_menu)
+
+        self.analysis_menu = tk.Menu(self.text_data_menu, tearoff=0)
+        self.text_data_menu.add_cascade(label="Analysis", menu=self.analysis_menu)
+        self.analysis_menu.add_command(label="Text Statistics...", command=self.text_statistics_action)
+        self.analysis_menu.add_command(label="Count Word Frequency...", command=self.count_word_frequency_action)
+        self.analysis_menu.add_command(label="Extract Unique Words...", command=self.extract_unique_words_dialog)
+        self.analysis_menu.add_command(label="Extract UPPERCASE Words...", command=self.extract_uppercase_words_action)
+
+        self.transformation_menu = tk.Menu(self.text_data_menu, tearoff=0)
+        self.text_data_menu.add_cascade(label="Transformation", menu=self.transformation_menu)
+        self.transformation_menu.add_command(label="QuickText Transformer...", command=self.open_quick_text_dialog)
+        self.transformation_menu.add_command(label="Add Prefix/Suffix to Lines...", command=self.add_prefix_suffix_dialog)
+        self.transformation_menu.add_command(label="Pad Lines...", command=self.pad_lines_dialog)
+        self.transformation_menu.add_command(label="Sort Lines...", command=self.sort_lines_dialog)
+
+        self.filtering_menu = tk.Menu(self.text_data_menu, tearoff=0)
+        self.text_data_menu.add_cascade(label="Filtering", menu=self.filtering_menu)
+        self.filtering_menu.add_command(label="Extract Lines by Length...", command=self.extract_lines_by_length_dialog)
+        self.filtering_menu.add_command(label="Remove Blank Lines", command=self.remove_all_blank_lines)
+        self.filtering_menu.add_command(label="Keep Lines Matching Regex...", command=lambda: self.filter_lines_by_regex_dialog(action_mode="keep"))
+        self.filtering_menu.add_command(label="Remove Lines Matching Regex...", command=lambda: self.filter_lines_by_regex_dialog(action_mode="remove"))
+
+        self.conversion_menu = tk.Menu(self.text_data_menu, tearoff=0)
+        self.text_data_menu.add_cascade(label="Conversion", menu=self.conversion_menu)
+        self.conversion_menu.add_command(label="View Data as Table (JSON/YAML)...", command=self.view_data_as_table_action)
+        self.conversion_menu.add_command(label="Convert CSV to Text Table", command=self.csv_to_text_table_action)
+        self.conversion_menu.add_command(label="Document to Text Converter...", command=self.open_doc_converter_dialog)
+        self.conversion_menu.add_command(label="Excel to HTML Site...", command=self.open_excel_to_html_dialog)
+        self.conversion_menu.add_command(label="Excel to CSVs & Stats...", command=self.open_excel_to_csv_stats_dialog)
+        self.conversion_menu.add_command(label="Excel to Multiple CSVs...", command=self.open_excel_to_csv_dialog)
+
+        # Development submenu
+        self.dev_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.tools_menu.add_cascade(label="Development", menu=self.dev_menu)
+        self.dev_menu.add_command(label="REST API Client...", command=self.open_rest_api_client_dialog)
+        self.dev_menu.add_command(label="SQL Parser...", command=self.open_sql_parser_dialog)
+        self.dev_menu.add_command(label="Run Script...", command=self.open_script_runner_dialog)
+        self.dev_menu.add_command(label="Fake Data Generator...", command=self.open_fake_data_generator_dialog)
+        self.regex_utilities_menu = tk.Menu(self.dev_menu, tearoff=0)
+        self.dev_menu.add_cascade(label="Regex Utilities", menu=self.regex_utilities_menu)
+        self.regex_utilities_menu.add_command(label="Extract by Pattern (Regex)...", command=self.extract_pattern_dialog)
+
+        # Utilities submenu
+        self.utilities_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.tools_menu.add_cascade(label="Utilities", menu=self.utilities_menu)
+        self.utilities_menu.add_command(label="URL Manager...", command=self.open_url_manager_dialog)
+        self.utilities_menu.add_command(label="Compare Two Lists...", command=self.open_compare_lists_dialog)
+        self.utilities_menu.add_command(label="Todo List / Kanban...", command=self.open_todo_manager_dialog)
+        self.utilities_menu.add_command(label="Clipboard Manager...", command=self.open_clipboard_manager_dialog)
+        self.utilities_menu.add_command(label="Flashcards...", command=self.open_flashcard_dialog)
+        self.utilities_menu.add_command(label="Security Tool...", command=self.open_security_tool_dialog)
+
+        # Media submenu
+        self.media_menu = tk.Menu(self.tools_menu, tearoff=0)
+        self.tools_menu.add_cascade(label="Media", menu=self.media_menu)
+        self.media_menu.add_command(label="Image Search by Name...", command=self.open_image_search_dialog)
+        self.media_menu.add_command(label="Drawing Tool...", command=self.open_drawing_tool_action)
+        self.media_menu.add_command(label="Create Flow Diagram...", command=self.open_flow_diagram_dialog)
+        self.media_menu.add_command(label="PowerPoint to Images...", command=self.open_pptx_to_image_dialog)
+        self.media_menu.add_command(label="PDF Tools...", command=self.open_pdf_tool_dialog)
+        self.screenshot_menu = tk.Menu(self.media_menu, tearoff=0)
+        self.media_menu.add_cascade(label="Screenshot Tool", menu=self.screenshot_menu)
         self.screenshot_menu.add_command(label="Capture Region...", command=lambda: self.open_screenshot_tool_action(mode="region"))
         self.screenshot_menu.add_command(label="Capture Full Screen...", command=lambda: self.open_screenshot_tool_action(mode="fullscreen"))
         # self.screenshot_menu.add_command(label="Capture Active Window...", command=lambda: self.open_screenshot_tool_action(mode="window")) # Deferred
@@ -685,31 +758,45 @@ class TextEditor:
         self.root.protocol("WM_DELETE_WINDOW", self.exit_editor_action)
 
     def _initialize_world_clocks(self):
-        self.world_clock_labels = []
-        # Clear any existing widgets in the frame, in case this is called multiple times
+        self.world_clock_frames = {}
         for widget in self.world_clock_frame.winfo_children():
             widget.destroy()
 
-        for tz_info in self.timezones_to_display:
-            clock_entry_frame = ttk.Frame(self.world_clock_frame)
-            clock_entry_frame.pack(side=tk.LEFT, padx=10, pady=2)
-
-            static_label = ttk.Label(clock_entry_frame, text=tz_info["label"])
-            static_label.pack(side=tk.LEFT)
-
-            time_label = ttk.Label(clock_entry_frame, text="Loading...")
-            time_label.pack(side=tk.LEFT, padx=(2,0))
-            self.world_clock_labels.append(time_label)
-
-        self._update_world_clocks() # Start the update cycle
+        self._update_world_clocks()
 
     def _update_world_clocks(self):
-        for i, tz_info in enumerate(self.timezones_to_display):
-            if i < len(self.world_clock_labels): # Ensure label exists
-                formatted_time = world_clock.get_formatted_datetime(tz_info["tz"])
-                self.world_clock_labels[i].config(text=formatted_time)
+        time_data = {}
+        for tz_info in self.timezones_to_display:
+            day_of_week, date_str, formatted_time = world_clock.get_formatted_datetime(tz_info["tz"])
+            group_key = f"{day_of_week},{date_str}"
+            if group_key not in time_data:
+                time_data[group_key] = []
+            time_data[group_key].append(f"{tz_info['label']} {formatted_time}")
 
-        # Schedule next update
+        for day in list(self.world_clock_frames.keys()):
+            if day not in time_data:
+                self.world_clock_frames[day].destroy()
+                del self.world_clock_frames[day]
+
+        for day, times in time_data.items():
+            if day not in self.world_clock_frames:
+                day_frame = ttk.LabelFrame(self.world_clock_frame, text=day)
+                day_frame.pack(side=tk.LEFT, padx=10, pady=2, fill=tk.Y)
+                self.world_clock_frames[day] = day_frame
+
+            day_frame = self.world_clock_frames[day]
+            for widget in day_frame.winfo_children():
+                widget.destroy()
+
+            am_times = [t for t in times if "AM" in t]
+            pm_times = [t for t in times if "PM" in t]
+
+            if am_times:
+                ttk.Label(day_frame, text="AM: " + " | ".join(am_times)).pack(anchor="w")
+
+            if pm_times:
+                ttk.Label(day_frame, text="PM: " + " | ".join(pm_times)).pack(anchor="w")
+
         self.root.after(5000, self._update_world_clocks)
 
 
@@ -1611,6 +1698,8 @@ class TextEditor:
     def open_sql_parser_dialog(self, event=None): dialog = SqlParserDialog(self); return "break"
     def open_excel_to_html_dialog(self, event=None): dialog = ExcelToHtmlDialog(self); return "break"
     def open_excel_to_csv_stats_dialog(self, event=None): dialog = ExcelToCsvStatsDialog(self); return "break"
+    def open_excel_to_csv_dialog(self, event=None): dialog = ExcelToCsvDialog(self); return "break"
+    def open_fake_data_generator_dialog(self, event=None): dialog = FakeDataGeneratorDialog(self); return "break"
     def open_url_manager_dialog(self, event=None): dialog = UrlManagerDialog(self); return "break"
     # def open_drawing_tool_action(self, event=None): dialog = DrawingDialog(self); return "break" # Commented out
     def open_drawing_tool_action(self, event=None):
@@ -1641,6 +1730,53 @@ class TextEditor:
         # dialog.grab_set() # Optional: if you want it to be modal
         return "break"
 
+    def open_calendar_dialog(self, event=None):
+        dialog = CalendarDialog(self)
+        return "break"
+
+    def open_clipboard_manager_dialog(self, event=None):
+        dialog = ClipboardManagerDialog(self)
+        return "break"
+
+    def open_flashcard_dialog(self, event=None):
+        dialog = FlashcardDialog(self)
+        return "break"
+
+    def open_pptx_to_image_dialog(self, event=None):
+        dialog = PptxToImageDialog(self)
+        return "break"
+
+    def format_code(self):
+        current_tab = self.get_current_tab()
+        if not current_tab or not current_tab.current_file:
+            messagebox.showerror("Error", "Please save the file first.", parent=self.root)
+            return
+
+        file_path = current_tab.current_file
+        _, extension = os.path.splitext(file_path)
+        extension = extension.lower()
+
+        content = current_tab.get_content()
+        formatter = None
+        if extension == ".py":
+            formatter = ["black", "-"]
+        elif extension in [".js", ".jsx", ".ts", ".tsx", ".json", ".css", ".scss", ".html", ".md"]:
+            formatter = ["prettier", "--stdin-filepath", file_path]
+
+        if formatter:
+            try:
+                process = subprocess.run(formatter, input=content, capture_output=True, text=True, check=True)
+                formatted_content = process.stdout
+                if content != formatted_content:
+                    current_tab.text_area.delete("1.0", tk.END)
+                    current_tab.text_area.insert("1.0", formatted_content)
+            except FileNotFoundError:
+                messagebox.showerror("Formatting Error", f"Could not find formatter. Please ensure that '{formatter[0]}' is installed and in your system's PATH.", parent=self.root)
+            except subprocess.CalledProcessError as e:
+                messagebox.showerror("Formatting Error", f"Error formatting code: {e.stderr}", parent=self.root)
+        else:
+            messagebox.showinfo("Info", "No formatter available for this file type.", parent=self.root)
+
     def open_todo_manager_dialog(self, event=None):
         dialog = TodoManagerDialog(self) # Pass self as master
         # dialog.grab_set() # Optional
@@ -1650,6 +1786,8 @@ class TextEditor:
 # Removed DrawingDialog class
 # Removed ExcelToCsvStatsDialog class definition
 from dialogs.excel_to_csv_stats_dialog import ExcelToCsvStatsDialog
+from dialogs.excel_to_csv_dialog import ExcelToCsvDialog
+from dialogs.fake_data_generator_dialog import FakeDataGeneratorDialog
 # Removed UrlManagerDialog class definition
 from dialogs.url_manager_dialog import UrlManagerDialog
 # Removed ExcelToHtmlDialog class definition
@@ -1663,8 +1801,14 @@ from dialogs.security_tool_dialog import SecurityToolDialog # Added this import
 from dialogs.script_runner_dialog import ScriptRunnerDialog # Added for script runner
 from dialogs.document_converter_dialog import DocumentConverterDialog # Added for doc converter
 from dialogs.todo_manager_dialog import TodoManagerDialog # Added for Todo Manager
+from dialogs.calendar_dialog import CalendarDialog
+from dialogs.clipboard_manager_dialog import ClipboardManagerDialog
+from dialogs.pptx_to_image_dialog import PptxToImageDialog
+from dialogs.flashcard_dialog import FlashcardDialog
+
+from ttkthemes import ThemedTk
 
 if __name__ == "__main__":
-    root = TkinterDnD.Tk()
+    root = ThemedTk(theme="arc")
     app = TextEditor(root)
     root.mainloop()

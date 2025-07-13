@@ -99,6 +99,18 @@ Jules Text Editor is a multi-tab text editor built with Python and Tkinter, offe
 *   Customizable settings (fonts, colors, keybindings).
 *   Plugin system.
 
+### Prettier Integration
+
+To use the code formatting feature for languages other than Python, you will need to have `Prettier` installed on your system. You can install it globally using npm:
+
+```bash
+npm install -g prettier
+```
+
+### PowerPoint to Image Conversion
+
+The PowerPoint to Image conversion tool requires a local installation of Microsoft PowerPoint and will only work on Windows.
+
 ## Known Limitations
 *   The "Regular Expression" option in Find/Replace uses Tkinter's Tcl-based regex engine, which may have different syntax or feature set compared to Python's `re` module.
 *   Performance for some operations (like "Replace All" or sorting) on extremely large files might be slow due to the nature of Tkinter's text widget manipulations.

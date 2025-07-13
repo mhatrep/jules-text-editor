@@ -9,16 +9,17 @@ def get_formatted_datetime(timezone_str):
         timezone_str (str): The timezone string (e.g., 'America/New_York').
 
     Returns:
-        str: The formatted datetime string "Day, HH:MM AM/PM"
-             or "Invalid TZ" if the timezone is unknown.
+        tuple: (day_of_week, date_str, time_str) or ("Invalid TZ", "", "")
     """
     try:
         tz = pytz.timezone(timezone_str)
         now = datetime.now(tz)
-        # %a for abbreviated weekday, %I for 12-hour clock, %M for minute, %p for AM/PM
-        return now.strftime("%a, %I:%M %p")
+        day_of_week = now.strftime("%a").upper()
+        date_str = now.strftime("%m/%d")
+        time_str = now.strftime("%I:%M %p")
+        return day_of_week, date_str, time_str
     except pytz.exceptions.UnknownTimeZoneError:
-        return "Invalid TZ"
+        return "Invalid TZ", "", ""
     except Exception as e:
         # Catch any other unexpected errors during formatting or time retrieval
         print(f"Error getting formatted datetime for {timezone_str}: {e}")
