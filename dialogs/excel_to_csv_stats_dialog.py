@@ -39,8 +39,12 @@ class ExcelToCsvStatsDialog:
         output_dir_button = ttk.Button(main_frame, text="Browse...", command=self._browse_output_dir)
         output_dir_button.grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
 
-        generate_button = ttk.Button(main_frame, text="Generate CSVs & Stats", command=self._generate_files)
-        generate_button.grid(row=2, column=0, columnspan=3, pady=15)
+        action_frame = ttk.Frame(main_frame)
+        action_frame.grid(row=2, column=0, columnspan=3, pady=15)
+        self.generate_button = ttk.Button(action_frame, text="Generate CSVs & Stats", command=self._generate_files)
+        self.generate_button.pack(side=tk.LEFT, padx=5)
+        self.cancel_button = ttk.Button(action_frame, text="Cancel", command=self._cancel_generation, state=tk.DISABLED)
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
 
         input_file_entry.focus_set()
         self.top.update_idletasks()
@@ -60,11 +64,25 @@ class ExcelToCsvStatsDialog:
             self.output_dir_var.set(dirpath)
 
     def _generate_files(self):
+        self.generate_button.config(state=tk.DISABLED)
+        self.cancel_button.config(state=tk.NORMAL)
+        self.cancel_requested = False
+
+        self.generation_thread = threading.Thread(target=self._generation_worker, daemon=True)
+        self.generation_thread.start()
+
+    def _cancel_generation(self):
+        if self.generation_thread and self.generation_thread.is_alive():
+            self.cancel_requested = True
+
+    def _generation_worker(self):
         input_file = self.input_excel_file_var.get()
         user_selected_output_dir = self.output_dir_var.get()
 
         if not input_file or not os.path.isfile(input_file):
             messagebox.showerror("Input Error", "Please select a valid Excel input file.", parent=self.top)
+            self.generate_button.config(state=tk.NORMAL)
+            self.cancel_button.config(state=tk.DISABLED)
             return
 
         if not user_selected_output_dir:
@@ -72,11 +90,15 @@ class ExcelToCsvStatsDialog:
                 base_output_dir = os.path.dirname(input_file)
                 self.output_dir_var.set(base_output_dir) # Update var for consistency
             else:
+                self.generate_button.config(state=tk.NORMAL)
+                self.cancel_button.config(state=tk.DISABLED)
                 return # User cancelled
         else:
             base_output_dir = user_selected_output_dir
             if not os.path.isdir(base_output_dir):
                 messagebox.showerror("Input Error", "The selected output directory is not valid.", parent=self.top)
+                self.generate_button.config(state=tk.NORMAL)
+                self.cancel_button.config(state=tk.DISABLED)
                 return
 
         excel_filename_no_ext = os.path.splitext(os.path.basename(input_file))[0]
@@ -91,10 +113,14 @@ class ExcelToCsvStatsDialog:
             os.makedirs(final_output_subfolder, exist_ok=True)
         except OSError as e:
             messagebox.showerror("Output Error", f"Could not create output subfolder: {final_output_subfolder}\nError: {e}", parent=self.top)
+            self.generate_button.config(state=tk.NORMAL)
+            self.cancel_button.config(state=tk.DISABLED)
             return
 
         if openpyxl is None:
             messagebox.showerror("Dependency Missing", "The 'openpyxl' library is not installed. Please install it (e.g., pip install openpyxl).", parent=self.top)
+            self.generate_button.config(state=tk.NORMAL)
+            self.cancel_button.config(state=tk.DISABLED)
             return
 
         try:
@@ -104,6 +130,9 @@ class ExcelToCsvStatsDialog:
             errors_occurred = []
 
             for sheet_name in sheet_names:
+                if self.cancel_requested:
+                    messagebox.showinfo("Cancelled", "Operation cancelled by user.", parent=self.top)
+                    break
                 ws = workbook[sheet_name]
                 # Sanitize sheet name for filename
                 sane_sheet_filename_part = re.sub(r'[^\w\s-]', '', sheet_name).strip().replace(' ', '_')
@@ -154,9 +183,9 @@ class ExcelToCsvStatsDialog:
             if errors_occurred:
                 error_summary = "\n\n".join(errors_occurred)
                 messagebox.showwarning("Processing Issues", f"{generated_count} sheet(s) processed with stats. Some errors occurred:\n\n{error_summary}\n\nCheck files in {final_output_subfolder}", parent=self.top)
-            elif generated_count > 0:
+            elif generated_count > 0 and not self.cancel_requested:
                 messagebox.showinfo("Success", f"Successfully generated {generated_count} CSV file(s) and their statistics in:\n{final_output_subfolder}", parent=self.top)
-            else:
+            elif not self.cancel_requested:
                 messagebox.showinfo("No Data", "No sheets were processed or found in the Excel file.", parent=self.top)
 
         except FileNotFoundError:
@@ -165,3 +194,6 @@ class ExcelToCsvStatsDialog:
             messagebox.showerror("Error", "Invalid Excel file format. Please provide a .xlsx file.", parent=self.top)
         except Exception as e:
             messagebox.showerror("Generation Error", f"An unexpected error occurred: {e}", parent=self.top)
+        finally:
+            self.generate_button.config(state=tk.NORMAL)
+            self.cancel_button.config(state=tk.DISABLED)

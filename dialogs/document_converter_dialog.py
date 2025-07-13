@@ -26,7 +26,8 @@ class DocumentConverterDialog(tk.Toplevel):
             ".docx": "Word Document",
             ".pdf": "PDF Document",
             ".html": "HTML File",
-            ".htm": "HTML File"
+            ".htm": "HTML File",
+            ".pptx": "PowerPoint Presentation"
         }
 
         main_frame = ttk.Frame(self, padding="10")
@@ -95,6 +96,9 @@ class DocumentConverterDialog(tk.Toplevel):
 
         self.convert_button = ttk.Button(action_frame, text="Start Conversion", command=self._start_conversion)
         self.convert_button.pack(side=tk.RIGHT, padx=5)
+
+        self.cancel_button = ttk.Button(action_frame, text="Cancel", command=self._cancel_conversion, state=tk.DISABLED)
+        self.cancel_button.pack(side=tk.RIGHT, padx=5)
 
         self.status_label_var = tk.StringVar(value="Status: Idle")
         status_label = ttk.Label(action_frame, textvariable=self.status_label_var)
@@ -205,18 +209,28 @@ class DocumentConverterDialog(tk.Toplevel):
             return
 
         self.convert_button.config(state=tk.DISABLED)
+        self.cancel_button.config(state=tk.NORMAL)
         self.status_label_var.set("Status: Starting conversion...")
 
         # Run the conversion in a separate thread to avoid freezing the UI
-        conversion_thread = threading.Thread(target=self._conversion_worker, daemon=True)
-        conversion_thread.start()
+        self.conversion_thread = threading.Thread(target=self._conversion_worker, daemon=True)
+        self.conversion_thread.start()
+
+    def _cancel_conversion(self):
+        if self.conversion_thread and self.conversion_thread.is_alive():
+            self.status_label_var.set("Status: Cancellation requested...")
+            self.cancel_requested = True
 
     def _conversion_worker(self):
         """The actual worker process for converting files."""
+        self.cancel_requested = False
         total_files = len(self.file_list)
         errors = []
 
         for i, filepath in enumerate(self.file_list):
+            if self.cancel_requested:
+                self.status_label_var.set("Status: Conversion cancelled.")
+                break
             self.status_label_var.set(f"Status: Processing {i+1}/{total_files}: {os.path.basename(filepath)}")
 
             file_ext = os.path.splitext(filepath)[1].lower()
@@ -230,6 +244,8 @@ class DocumentConverterDialog(tk.Toplevel):
                 raw_text = self._extract_text_from_pdf(filepath)
             elif file_ext in ['.html', '.htm']:
                 raw_text = self._extract_text_from_html(filepath)
+            elif file_ext == '.pptx':
+                raw_text = self._extract_text_from_pptx(filepath)
             else:
                 # This case should ideally not be reached if listbox is populated correctly
                 errors.append(f"Unsupported file type: {os.path.basename(filepath)}")
@@ -270,6 +286,7 @@ class DocumentConverterDialog(tk.Toplevel):
             messagebox.showerror("Conversion Errors", f"The following errors occurred:\n\n{error_details_str}", parent=self)
 
         self.convert_button.config(state=tk.NORMAL)
+        self.cancel_button.config(state=tk.DISABLED)
 
 
     def on_close(self, event=None):
@@ -315,21 +332,53 @@ class DocumentConverterDialog(tk.Toplevel):
             # print(f"Error reading pdf file {filepath}: {e}")
             return f"[Error reading PDF: {e}]"
 
+    def _extract_text_from_pptx(self, filepath):
+        try:
+            from pptx import Presentation
+            prs = Presentation(filepath)
+            full_text = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        full_text.append(shape.text)
+            return '\n'.join(full_text)
+        except ImportError:
+            return "[Error: python-pptx library not installed]"
+        except Exception as e:
+            return f"[Error reading PPTX: {e}]"
+
     def _extract_text_from_html(self, filepath):
         try:
-            from bs4 import BeautifulSoup # beautifulsoup4 library
+            from bs4 import BeautifulSoup, Comment
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                soup = BeautifulSoup(f, 'lxml') # or 'html.parser'
-            # Get text, remove scripts and styles
-            for script_or_style in soup(["script", "style"]):
-                script_or_style.decompose() # Remove these tags
-            text = soup.get_text(separator='\n', strip=True)
+                soup = BeautifulSoup(f, 'lxml')
+
+            # Tags to remove completely
+            tags_to_remove = ['script', 'style', 'nav', 'footer', 'header', 'aside', 'form', 'button', 'input', 'textarea', 'label', 'select', 'option']
+            for tag in soup(tags_to_remove):
+                tag.decompose()
+
+            # Remove comments
+            comments = soup.find_all(string=lambda text: isinstance(text, Comment))
+            for comment in comments:
+                comment.extract()
+
+            # Replace some block-level elements with newlines for better formatting
+            for tag in soup(['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'blockquote']):
+                tag.append('\n')
+
+            # Get text, which now includes the added newlines
+            text = soup.get_text(separator=' ', strip=False) # Use space separator to handle inline tags better initially
+
+            # Post-processing to clean up whitespace
+            lines = (line.strip() for line in text.splitlines()) # Process each line
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  ")) # Split on multiple spaces to condense them
+            text = '\n'.join(chunk for chunk in chunks if chunk) # Rejoin non-empty parts with single newlines
+
             return text
         except ImportError:
-            # print("beautifulsoup4 or lxml library not found. Please install them.")
-            return "[Error: beautifulsoup4/lxml library not installed]"
+            return "[Error: beautifulsoup4 or lxml library not installed]"
         except Exception as e:
-            # print(f"Error reading html file {filepath}: {e}")
             return f"[Error reading HTML: {e}]"
 
     # --- Text Processing Method ---

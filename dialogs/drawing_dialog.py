@@ -1,7 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import os
-from PIL import ImageGrab # For saving canvas
+from PIL import ImageGrab, Image, ImageTk, ImageFilter, ImageOps, ImageEnhance
+import cv2
+import numpy as np
+
 
 class DrawingDialog:
     def __init__(self, parent_editor):
@@ -12,6 +15,17 @@ class DrawingDialog:
         self.top.transient(self.root) # Keep on top of parent
         # self.top.grab_set() # Modal, if desired
         self.top.resizable(True, True)
+
+        self.is_maximized = False
+        self.top.bind("<F11>", self.toggle_maximize)
+        self.top.bind("<Escape>", self.unmaximize)
+
+        maximize_button = ttk.Button(self.top, text="□", command=self.toggle_maximize)
+        maximize_button.place(relx=1.0, rely=0, anchor='ne')
+
+        self.original_image = None
+        self.displayed_image_tk = None
+        self.current_canvas_image_id = None
 
         self.current_brush_size = 5
         self.current_color = "black"
@@ -155,6 +169,16 @@ class DrawingDialog:
         self.select_tool_button = ttk.Button(basic_tools_subframe, text="Select", command=self.activate_select_tool, width=btn_width)
         self.select_tool_button.grid(row=1, column=1, padx=1, pady=1, sticky="ew") # Added Select button
 
+        shape_tools_subframe = ttk.Frame(tools_group)
+        shape_tools_subframe.pack(fill=tk.X, pady=(5,0))
+        self.rectangle_button = ttk.Button(shape_tools_subframe, text="□", command=self.activate_rectangle_mode, width=5)
+        self.rectangle_button.pack(side=tk.LEFT, padx=1)
+        self.circle_button = ttk.Button(shape_tools_subframe, text="○", command=self.activate_circle_mode, width=5)
+        self.circle_button.pack(side=tk.LEFT, padx=1)
+        self.triangle_button = ttk.Button(shape_tools_subframe, text="△", command=self.activate_triangle_mode, width=5)
+        self.triangle_button.pack(side=tk.LEFT, padx=1)
+        self.counter_tool_button = ttk.Button(shape_tools_subframe, text="123", command=self.activate_counter_tool, width=5)
+        self.counter_tool_button.pack(side=tk.LEFT, padx=1)
 
         line_tools_subframe = ttk.Frame(tools_group)
         line_tools_subframe.pack(fill=tk.X, pady=(5,0))
@@ -176,6 +200,52 @@ class DrawingDialog:
         self.counter_tool_button = ttk.Button(shape_tools_subframe, text="123", command=self.activate_counter_tool, width=5)
         self.counter_tool_button.pack(side=tk.LEFT, padx=1)
 
+
+        # --- Image Filters Group ---
+        filters_group = ttk.LabelFrame(self.sidebar_frame, text="Image Filters", padding=5)
+        filters_group.pack(fill=tk.X, pady=5, padx=5)
+
+        load_image_button = ttk.Button(filters_group, text="Load Image", command=self._load_image)
+        load_image_button.pack(fill=tk.X, pady=(0, 5))
+
+        self.filter_options = [
+            "Original", "Sketch", "Cartoonify", "Oil Painting", "Posterize",
+            "Edge Enhance", "Emboss", "Solarize", "Blur", "Mosaic", "Sepia",
+            "Black and White"
+        ]
+        self.current_filter_var = tk.StringVar(value=self.filter_options[0])
+        self.filter_menu = ttk.Combobox(filters_group, textvariable=self.current_filter_var,
+                                        values=self.filter_options, state="readonly")
+        self.filter_menu.pack(fill=tk.X)
+        self.filter_menu.bind("<<ComboboxSelected>>", self.apply_selected_filter)
+
+        # --- Image Adjustments Group ---
+        adjustments_group = ttk.LabelFrame(self.sidebar_frame, text="Image Adjustments", padding=5)
+        adjustments_group.pack(fill=tk.X, pady=5, padx=5)
+
+        # Brightness
+        brightness_frame = ttk.Frame(adjustments_group)
+        brightness_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(brightness_frame, text="Brightness:").pack(side=tk.LEFT)
+        self.brightness_scale = ttk.Scale(brightness_frame, from_=0, to=2, orient=tk.HORIZONTAL, command=self.apply_image_adjustments)
+        self.brightness_scale.set(1)
+        self.brightness_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Contrast
+        contrast_frame = ttk.Frame(adjustments_group)
+        contrast_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(contrast_frame, text="Contrast:").pack(side=tk.LEFT)
+        self.contrast_scale = ttk.Scale(contrast_frame, from_=0, to=2, orient=tk.HORIZONTAL, command=self.apply_image_adjustments)
+        self.contrast_scale.set(1)
+        self.contrast_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Transparency
+        transparency_frame = ttk.Frame(adjustments_group)
+        transparency_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(transparency_frame, text="Transparency:").pack(side=tk.LEFT)
+        self.transparency_scale = ttk.Scale(transparency_frame, from_=0, to=1, orient=tk.HORIZONTAL, command=self.apply_image_adjustments)
+        self.transparency_scale.set(1)
+        self.transparency_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # --- Canvas Actions Group (moved to bottom of sidebar) ---
         actions_group = ttk.LabelFrame(self.sidebar_frame, text="Canvas Actions", padding=5)
@@ -1013,3 +1083,179 @@ class DrawingDialog:
             elif "Permission denied" in error_detail:
                  error_detail += f"\n\nEnsure you have write permissions for the directory: {os.path.dirname(filepath)}"
             messagebox.showerror("Save Error", f"Could not save canvas as PNG: {error_detail}", parent=self.top)
+
+    def _load_image(self):
+        filepath = filedialog.askopenfilename(
+            parent=self.top,
+            title="Load Image",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.gif"), ("All Files", "*.*")]
+        )
+        if not filepath:
+            return
+
+        try:
+            self.original_image = Image.open(filepath).convert("RGBA")
+            self._display_image(self.original_image)
+            self.current_filter_var.set("Original")
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Could not load image: {e}", parent=self.top)
+
+    def _display_image(self, pil_image):
+        if self.current_canvas_image_id:
+            self.canvas.delete(self.current_canvas_image_id)
+
+        self.canvas.config(width=pil_image.width, height=pil_image.height)
+        self.displayed_image_tk = ImageTk.PhotoImage(pil_image)
+        self.current_canvas_image_id = self.canvas.create_image(
+            0, 0,
+            anchor=tk.NW, image=self.displayed_image_tk
+        )
+        self.canvas.tag_lower(self.current_canvas_image_id)
+
+    def apply_selected_filter(self, event=None):
+        if not self.original_image:
+            messagebox.showinfo("No Image", "Please load an image first.", parent=self.top)
+            self.current_filter_var.set("Original")
+            return
+
+        filter_name = self.current_filter_var.get()
+        filtered_image = None
+
+        if filter_name == "Original":
+            filtered_image = self.original_image
+        elif filter_name == "Sketch":
+            filtered_image = self._apply_sketch_filter()
+        elif filter_name == "Cartoonify":
+            filtered_image = self._apply_cartoonify_filter()
+        elif filter_name == "Oil Painting":
+            filtered_image = self._apply_oil_painting_filter()
+        elif filter_name == "Posterize":
+            filtered_image = self._apply_posterize_filter()
+        elif filter_name == "Edge Enhance":
+            filtered_image = self._apply_edge_enhance_filter()
+        elif filter_name == "Emboss":
+            filtered_image = self._apply_emboss_filter()
+        elif filter_name == "Solarize":
+            filtered_image = self._apply_solarize_filter()
+        elif filter_name == "Blur":
+            filtered_image = self._apply_blur_filter()
+        elif filter_name == "Mosaic":
+            filtered_image = self._apply_mosaic_filter()
+        elif filter_name == "Sepia":
+            filtered_image = self._apply_sepia_filter()
+        elif filter_name == "Black and White":
+            filtered_image = self._apply_bw_filter()
+
+        if filtered_image:
+            self._display_image(filtered_image)
+
+    def _pil_to_cv2(self, pil_image):
+        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGBA2BGRA)
+
+    def _cv2_to_pil(self, cv2_image):
+        return Image.fromarray(cv2.cvtColor(cv2_image, cv2.COLOR_BGRA2RGBA))
+
+    def _apply_sketch_filter(self):
+        img_cv = self._pil_to_cv2(self.original_image)
+        grey_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        invert = cv2.bitwise_not(grey_img)
+        blur = cv2.GaussianBlur(invert, (21, 21), 0)
+        inverted_blur = cv2.bitwise_not(blur)
+        sketch = cv2.divide(grey_img, inverted_blur, scale=256.0)
+        return self._cv2_to_pil(cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR))
+
+    def _apply_cartoonify_filter(self):
+        img_cv = self._pil_to_cv2(self.original_image)
+        img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_RGBA2RGB)
+        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+        gray = cv2.medianBlur(gray, 5)
+        edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 9)
+        color = cv2.bilateralFilter(img_rgb, 9, 300, 300)
+        cartoon = cv2.bitwise_and(color, color, mask=edges)
+        return self._cv2_to_pil(cartoon)
+
+    def _apply_oil_painting_filter(self):
+        img_cv = self._pil_to_cv2(self.original_image)
+        oil_painting = cv2.xphoto.oilPainting(img_cv, 7, 1)
+        return self._cv2_to_pil(oil_painting)
+
+    def _apply_posterize_filter(self):
+        return ImageOps.posterize(self.original_image.convert("RGB"), 3)
+
+    def _apply_edge_enhance_filter(self):
+        return self.original_image.filter(ImageFilter.EDGE_ENHANCE_MORE)
+
+    def _apply_emboss_filter(self):
+        return self.original_image.filter(ImageFilter.EMBOSS)
+
+    def _apply_solarize_filter(self):
+        return ImageOps.solarize(self.original_image.convert("RGB"), threshold=128)
+
+    def _apply_blur_filter(self):
+        return self.original_image.filter(ImageFilter.GaussianBlur(5))
+
+    def _apply_mosaic_filter(self):
+        img = self.original_image.copy()
+        size = 16
+        img = img.resize((img.width // size, img.height // size), Image.NEAREST)
+        img = img.resize((img.width * size, img.height * size), Image.NEAREST)
+        return img
+
+    def _apply_sepia_filter(self):
+        img = self.original_image.convert("RGB")
+        width, height = img.size
+        pixels = img.load()
+
+        for py in range(height):
+            for px in range(width):
+                r, g, b = img.getpixel((px, py))
+                tr = int(0.393 * r + 0.769 * g + 0.189 * b)
+                tg = int(0.349 * r + 0.686 * g + 0.168 * b)
+                tb = int(0.272 * r + 0.534 * g + 0.131 * b)
+                if tr > 255: tr = 255
+                if tg > 255: tg = 255
+                if tb > 255: tb = 255
+                pixels[px, py] = (tr, tg, tb)
+        return img
+
+    def _apply_bw_filter(self):
+        return self.original_image.convert("L")
+
+    def toggle_maximize(self, event=None):
+        if self.is_maximized:
+            self.unmaximize()
+        else:
+            self.top.attributes("-fullscreen", True)
+            self.is_maximized = True
+
+    def unmaximize(self, event=None):
+        self.top.attributes("-fullscreen", False)
+        self.is_maximized = False
+
+    def apply_image_adjustments(self, event=None):
+        if not self.original_image:
+            return
+
+        brightness = self.brightness_scale.get()
+        contrast = self.contrast_scale.get()
+        transparency = self.transparency_scale.get()
+
+        # Start with the original image
+        adjusted_image = self.original_image.copy()
+
+        # Apply brightness
+        enhancer = ImageEnhance.Brightness(adjusted_image)
+        adjusted_image = enhancer.enhance(brightness)
+
+        # Apply contrast
+        enhancer = ImageEnhance.Contrast(adjusted_image)
+        adjusted_image = enhancer.enhance(contrast)
+
+        # Apply transparency
+        if adjusted_image.mode != 'RGBA':
+            adjusted_image = adjusted_image.convert('RGBA')
+        alpha = adjusted_image.split()[3]
+        alpha = ImageEnhance.Brightness(alpha).enhance(transparency)
+        adjusted_image.putalpha(alpha)
+
+        self._display_image(adjusted_image)

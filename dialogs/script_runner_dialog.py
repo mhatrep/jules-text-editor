@@ -202,7 +202,23 @@ class ScriptRunnerDialog(tk.Toplevel):
         self.copy_output_button.pack(side=tk.LEFT, padx=(0,5))
 
         self.save_output_button = ttk.Button(output_actions_frame, text="Save Output As...", command=self._save_output_to_file, state=tk.DISABLED)
-        self.save_output_button.pack(side=tk.LEFT)
+        self.save_output_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.clear_output_button = ttk.Button(output_actions_frame, text="Clear Output", command=self._clear_output)
+        self.clear_output_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Filter controls for the output
+        filter_frame = ttk.Frame(output_actions_frame)
+        filter_frame.pack(side=tk.LEFT, padx=(10, 0))
+        self.output_filter_var = tk.StringVar()
+        self.output_filter_var.trace_add("write", self._filter_output_text)
+        ttk.Label(filter_frame, text="Filter:").pack(side=tk.LEFT, padx=(0, 2))
+        self.output_filter_entry = ttk.Entry(filter_frame, textvariable=self.output_filter_var)
+        self.output_filter_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.case_sensitive_var = tk.BooleanVar()
+        self.case_sensitive_check = ttk.Checkbutton(filter_frame, text="Case Sensitive", variable=self.case_sensitive_var, command=self._filter_output_text)
+        self.case_sensitive_check.pack(side=tk.LEFT)
 
         # Trace changes in output_text to enable/disable copy/save buttons
         self.output_text.bind("<<Modified>>", self._on_output_text_changed)
@@ -239,6 +255,12 @@ class ScriptRunnerDialog(tk.Toplevel):
             # messagebox.showinfo("Info", "Nothing to copy from output.", parent=self) # Optional: inform if nothing to copy
             pass
 
+    def _clear_output(self):
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.delete("1.0", tk.END)
+        self.output_text.config(state=tk.DISABLED)
+        self.status_label_var.set("Status: Idle")
+
     def _save_output_to_file(self):
         """Saves the content of the output text area to a user-selected file."""
         content = self.output_text.get("1.0", tk.END + "-1c")
@@ -256,10 +278,8 @@ class ScriptRunnerDialog(tk.Toplevel):
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(content)
 
-                original_status = self.status_label_var.get()
                 self.status_label_var.set(f"Output saved to {os.path.basename(filepath)}")
-                self.after(3000, lambda current_status=self.status_label_var.get(), revert_to=original_status: \
-                           self.status_label_var.set(revert_to) if self.status_label_var.get().startswith("Output saved to") else None)
+                self.after(3000, lambda: self.status_label_var.set("Status: Idle"))
             except Exception as e:
                 messagebox.showerror("Save Error", f"Could not save output to file:\n{e}", parent=self)
 
@@ -469,7 +489,7 @@ class ScriptRunnerDialog(tk.Toplevel):
 
             # Set script type in combobox
             script_type = script_config['type']
-            available_types = self.script_type_combocget('values')
+            available_types = self.script_type_combo.cget('values')
             if script_type in available_types:
                 self.script_type_combo.set(script_type)
             else:
@@ -863,6 +883,23 @@ class ScriptRunnerDialog(tk.Toplevel):
 
         self.process = None
         self.stop_event.clear() # Important to clear for the next run
+
+    def _filter_output_text(self, *args):
+        self.output_text.tag_remove('highlight', '1.0', tk.END)
+        filter_string = self.output_filter_var.get()
+        if not filter_string:
+            return
+
+        case_sensitive = self.case_sensitive_var.get()
+        start_pos = '1.0'
+        while True:
+            start_pos = self.output_text.search(filter_string, start_pos, stopindex=tk.END, nocase=not case_sensitive)
+            if not start_pos:
+                break
+            end_pos = f"{start_pos}+{len(filter_string)}c"
+            self.output_text.tag_add('highlight', start_pos, end_pos)
+            start_pos = end_pos
+        self.output_text.tag_config('highlight', background='yellow', foreground='black')
 
     def on_close(self, event=None):
         """
