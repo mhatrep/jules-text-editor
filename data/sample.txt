@@ -1,7 +1,0 @@
-Line 1 with trailing spaces.
-  Line 2 with leading spaces.
-
-
-Line 3 with multiple blank lines above.
-Line 4 with a form feed: \x0C and vertical tab: \x0B
-Line 5.
