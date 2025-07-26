@@ -3,6 +3,7 @@ import datetime
 import docx
 import pandas as pd
 from PyPDF2 import PdfReader
+from fuzzywuzzy import fuzz
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 class FileIndexer(QObject):
@@ -57,20 +58,35 @@ class FileIndexer(QObject):
                     pass
         self.finished.emit()
 
-    def search_files(self, query):
+    def search_files(self, query, file_type=None, min_size=None, max_size=None, start_date=None, end_date=None, fuzzy=False):
         query = query.lower()
         terms = query.split()
 
+        results = list(self.files.values())
+
+        # Filter by file type
+        if file_type and file_type != "All":
+            results = [data for data in results if data['type'] == file_type]
+
+        # Filter by size
+        if min_size is not None:
+            results = [data for data in results if data['size'] >= min_size * 1024]
+        if max_size is not None and max_size > 0:
+            results = [data for data in results if data['size'] <= max_size * 1024]
+
+        # Filter by date
+        if start_date is not None:
+            results = [data for data in results if data['modified'].date() >= start_date]
+        if end_date is not None:
+            results = [data for data in results if data['modified'].date() <= end_date]
+
         if not terms:
-            return []
+            return results
 
         # Separate terms into AND, OR, and NOT groups
         and_terms = [term for term in terms if term not in ['and', 'or', 'not'] and not term.startswith('not:')]
         or_terms = [term for term in terms if term in ['or']] # Not implemented yet
         not_terms = [term.replace('not:', '') for term in terms if term.startswith('not:')]
-
-
-        results = list(self.files.values())
 
         # Filter out NOT terms
         if not_terms:
@@ -78,6 +94,9 @@ class FileIndexer(QObject):
 
         # Filter for AND terms
         if and_terms:
-            results = [data for data in results if all(term in data['name'].lower() or term in data['content'].lower() for term in and_terms)]
+            if fuzzy:
+                results = [data for data in results if all(fuzz.partial_ratio(term, data['name'].lower()) > 70 or fuzz.partial_ratio(term, data['content'].lower()) > 70 for term in and_terms)]
+            else:
+                results = [data for data in results if all(term in data['name'].lower() or term in data['content'].lower() for term in and_terms)]
 
         return results

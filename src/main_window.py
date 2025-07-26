@@ -1,9 +1,10 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter, QTextEdit,
-    QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget
+    QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget,
+    QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox
 )
 import os
-from PyQt5.QtCore import Qt, QThread, QTimer
+from PyQt5.QtCore import Qt, QThread, QTimer, QDate
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap
 from src.file_indexer import FileIndexer
 from src.highlighter import Highlighter
@@ -22,14 +23,16 @@ class MainWindow(QMainWindow):
 
         # Search bar
         self.search_bar_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
+        self.search_input = QComboBox()
+        self.search_input.setEditable(True)
         self.search_input.setPlaceholderText("Enter your search query...")
         self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.search_files)
-        self.search_input.textChanged.connect(self.start_search_timer)
+        self.search_input.lineEdit().textChanged.connect(self.start_search_timer)
         self.search_bar_layout.addWidget(self.search_input)
         self.search_bar_layout.addWidget(self.search_button)
         self.layout.addLayout(self.search_bar_layout)
+        self.recent_searches = []
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -40,8 +43,43 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.main_splitter)
 
         # Left panel (navigation/filter)
-        self.nav_panel = QTextEdit("Navigation/Filter Panel")
+        self.nav_panel = QWidget()
+        self.nav_layout = QFormLayout(self.nav_panel)
         self.main_splitter.addWidget(self.nav_panel)
+
+        self.file_type_filter = QComboBox()
+        self.file_type_filter.addItems(["All", ".txt", ".pdf", ".docx", ".csv", ".xlsx"])
+        self.nav_layout.addRow("File type:", self.file_type_filter)
+
+        self.min_size_filter = QSpinBox()
+        self.min_size_filter.setRange(0, 1024 * 1024)
+        self.min_size_filter.setSuffix(" KB")
+        self.nav_layout.addRow("Min size:", self.min_size_filter)
+
+        self.max_size_filter = QSpinBox()
+        self.max_size_filter.setRange(0, 1024 * 1024)
+        self.max_size_filter.setSuffix(" KB")
+        self.nav_layout.addRow("Max size:", self.max_size_filter)
+
+        self.start_date_filter = QDateEdit()
+        self.start_date_filter.setDate(QDate.currentDate().addYears(-1))
+        self.start_date_filter.setCalendarPopup(True)
+        self.nav_layout.addRow("From date:", self.start_date_filter)
+
+        self.end_date_filter = QDateEdit()
+        self.end_date_filter.setDate(QDate.currentDate())
+        self.end_date_filter.setCalendarPopup(True)
+        self.nav_layout.addRow("To date:", self.end_date_filter)
+
+        self.file_type_filter.currentIndexChanged.connect(self.search_files)
+        self.min_size_filter.valueChanged.connect(self.search_files)
+        self.max_size_filter.valueChanged.connect(self.search_files)
+        self.start_date_filter.dateChanged.connect(self.search_files)
+        self.end_date_filter.dateChanged.connect(self.search_files)
+
+        self.fuzzy_checkbox = QCheckBox("Enable fuzzy matching")
+        self.nav_layout.addRow(self.fuzzy_checkbox)
+        self.fuzzy_checkbox.stateChanged.connect(self.search_files)
 
         # Center splitter (results and preview)
         self.center_splitter = QSplitter(Qt.Vertical)
@@ -81,13 +119,23 @@ class MainWindow(QMainWindow):
         self.search_timer.start(500)  # Debounce time of 500ms
 
     def search_files(self):
-        query = self.search_input.text()
-        if not query:
-            self.results_model.clear()
-            self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified'])
-            return
+        query = self.search_input.currentText()
+        if query and query not in self.recent_searches:
+            self.recent_searches.insert(0, query)
+            self.search_input.insertItem(0, query)
+            if len(self.recent_searches) > 10:
+                self.recent_searches.pop()
+                self.search_input.removeItem(10)
 
-        self.results = self.indexer.search_files(query)
+
+        file_type = self.file_type_filter.currentText()
+        min_size = self.min_size_filter.value()
+        max_size = self.max_size_filter.value()
+        start_date = self.start_date_filter.date().toPyDate()
+        end_date = self.end_date_filter.date().toPyDate()
+        fuzzy = self.fuzzy_checkbox.isChecked()
+
+        self.results = self.indexer.search_files(query, file_type, min_size, max_size, start_date, end_date, fuzzy)
         self.results_model.clear()
         self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified'])
         for data in self.results:
@@ -103,7 +151,7 @@ class MainWindow(QMainWindow):
 
         index = selected.indexes()[0]
         data = self.results[index.row()]
-        query = self.search_input.text()
+        query = self.search_input.currentText()
 
         if data['type'] in self.indexer.TEXT_EXTENSIONS or data['type'] in ['.docx', '.pdf', '.csv', '.xlsx']:
             self.text_preview.setPlainText(data['content'])
