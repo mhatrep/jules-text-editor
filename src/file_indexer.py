@@ -99,4 +99,18 @@ class FileIndexer(QObject):
             else:
                 results = [data for data in results if all(term in data['name'].lower() or term in data['content'].lower() for term in and_terms)]
 
+        # Generate snippets
+        for data in results:
+            data['snippet'] = self.generate_snippet(data['content'], and_terms)
+
         return results
+
+    def generate_snippet(self, content, terms):
+        if not content or not terms:
+            return ""
+
+        lines = content.splitlines()
+        for i, line in enumerate(lines):
+            if any(term in line.lower() for term in terms):
+                return " ".join(lines[i:i+3])
+        return " ".join(lines[:3])

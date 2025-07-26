@@ -1,13 +1,14 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter, QTextEdit,
     QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget,
-    QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox
+    QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox, QFileIconProvider
 )
 import os
-from PyQt5.QtCore import Qt, QThread, QTimer, QDate
+from PyQt5.QtCore import Qt, QThread, QTimer, QDate, QFileInfo
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap
 from src.file_indexer import FileIndexer
 from src.highlighter import Highlighter
+from src.result_delegate import ResultDelegate
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -89,7 +90,8 @@ class MainWindow(QMainWindow):
         self.results_view = QTreeView()
         self.results_model = QStandardItemModel()
         self.results_view.setModel(self.results_model)
-        self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified'])
+        self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified', 'Snippet'])
+        self.results_view.setItemDelegate(ResultDelegate(self.results_view))
         self.results_view.selectionModel().selectionChanged.connect(self.on_result_selected)
         self.center_splitter.addWidget(self.results_view)
 
@@ -137,13 +139,18 @@ class MainWindow(QMainWindow):
 
         self.results = self.indexer.search_files(query, file_type, min_size, max_size, start_date, end_date, fuzzy)
         self.results_model.clear()
-        self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified'])
+        self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified', 'Snippet'])
+        provider = QFileIconProvider()
         for data in self.results:
             name_item = QStandardItem(data['name'])
+            file_info = QFileInfo(data['path'])
+            icon = provider.icon(file_info)
+            name_item.setIcon(icon)
             path_item = QStandardItem(data['path'])
             size_item = QStandardItem(str(data['size']))
             date_item = QStandardItem(data['modified'].strftime("%Y-%m-%d %H:%M:%S"))
-            self.results_model.appendRow([name_item, path_item, size_item, date_item])
+            snippet_item = QStandardItem(data.get('snippet', ''))
+            self.results_model.appendRow([name_item, path_item, size_item, date_item, snippet_item])
 
     def on_result_selected(self, selected, deselected):
         if not selected.indexes():
