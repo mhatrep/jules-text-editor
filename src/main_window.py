@@ -38,7 +38,20 @@ class MainWindow(QMainWindow):
         self.search_bar_layout.addWidget(self.search_input)
         self.search_bar_layout.addWidget(self.search_button)
         self.layout.addLayout(self.search_bar_layout)
+
+        # Toolbar
+        self.toolbar = self.addToolBar("Main")
+        self.toggle_nav_action = self.toolbar.addAction("Toggle Nav")
+        self.toggle_nav_action.triggered.connect(self.toggle_nav_panel)
+        self.toggle_preview_action = self.toolbar.addAction("Toggle Preview")
+        self.toggle_preview_action.triggered.connect(self.toggle_preview_panel)
+        self.theme_action = self.toolbar.addAction("Toggle Theme")
+        self.theme_action.triggered.connect(self.toggle_theme)
+        self.font_size_action = self.toolbar.addAction("Toggle Large Font")
+        self.font_size_action.triggered.connect(self.toggle_font_size)
         self.recent_searches = []
+        self.dark_theme = False
+        self.large_font = False
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -228,6 +241,30 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["open", path])
         else:
             subprocess.Popen(["xdg-open", path])
+
+    def toggle_font_size(self):
+        self.large_font = not self.large_font
+        font = self.font()
+        if self.large_font:
+            font.setPointSize(16)
+        else:
+            font.setPointSize(10)
+        self.setFont(font)
+
+    def toggle_theme(self):
+        self.dark_theme = not self.dark_theme
+        if self.dark_theme:
+            with open("src/dark_theme.qss", "r") as f:
+                self.setStyleSheet(f.read())
+        else:
+            with open("src/light_theme.qss", "r") as f:
+                self.setStyleSheet(f.read())
+
+    def toggle_nav_panel(self):
+        self.nav_panel.setVisible(not self.nav_panel.isVisible())
+
+    def toggle_preview_panel(self):
+        self.center_splitter.widget(1).setVisible(not self.center_splitter.widget(1).isVisible())
 
     def open_folder(self, index):
         data = self.results[index.row()]

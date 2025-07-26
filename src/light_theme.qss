@@ -1,0 +1,45 @@
+/* Light Theme */
+QWidget {
+    background-color: #ffffff;
+    color: #000000;
+}
+
+QTreeView {
+    background-color: #ffffff;
+    color: #000000;
+    alternate-background-color: #f2f2f2;
+}
+
+QHeaderView::section {
+    background-color: #e6e6e6;
+    color: #000000;
+    padding: 4px;
+    border: 1px solid #dcdcdc;
+}
+
+QTextEdit, QLineEdit, QComboBox, QSpinBox, QDateEdit {
+    background-color: #ffffff;
+    color: #000000;
+    border: 1px solid #dcdcdc;
+    selection-background-color: #a8cce9;
+}
+
+QPushButton {
+    background-color: #f0f0f0;
+    color: #000000;
+    border: 1px solid #dcdcdc;
+    padding: 4px;
+}
+
+QPushButton:hover {
+    background-color: #e0e0e0;
+}
+
+QPushButton:pressed {
+    background-color: #d0d0d0;
+}
+
+QToolBar {
+    background-color: #f0f0f0;
+    border: none;
+}
