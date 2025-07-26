@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget,
     QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox, QFileIconProvider,
     QTableView, QScrollArea, QMenu, QFileSystemModel, QListWidget, QAction,
-    QFileDialog
+    QFileDialog, QInputDialog, QMessageBox, QApplication
 )
 import os
 import pandas as pd
@@ -12,7 +12,7 @@ import subprocess
 import sys
 import json
 from PyQt5.QtCore import Qt, QThread, QTimer, QDate, QFileInfo
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap, QImage
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap, QImage, QClipboard
 from src.file_indexer import FileIndexer
 from src.highlighter import Highlighter
 from src.result_delegate import ResultDelegate
@@ -51,6 +51,8 @@ class MainWindow(QMainWindow):
         self.theme_action.triggered.connect(self.toggle_theme)
         self.font_size_action = self.toolbar.addAction("Toggle Large Font")
         self.font_size_action.triggered.connect(self.toggle_font_size)
+        self.export_action = self.toolbar.addAction("Export Results")
+        self.export_action.triggered.connect(self.export_results)
         self.recent_searches = []
         self.dark_theme = False
         self.large_font = False
@@ -151,6 +153,7 @@ class MainWindow(QMainWindow):
         self.results_view.setModel(self.results_model)
         self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified', 'Snippet'])
         self.results_view.setItemDelegate(ResultDelegate(self.results_view))
+        self.results_view.setSelectionMode(QTreeView.ExtendedSelection)
         self.results_view.selectionModel().selectionChanged.connect(self.on_result_selected)
         self.results_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.results_view.customContextMenuRequested.connect(self.show_context_menu)
@@ -268,6 +271,9 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         open_action = menu.addAction("Open")
         open_folder_action = menu.addAction("Open Containing Folder")
+        copy_path_action = menu.addAction("Copy Path")
+        rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("Delete")
 
         action = menu.exec_(self.results_view.viewport().mapToGlobal(pos))
 
@@ -275,6 +281,12 @@ class MainWindow(QMainWindow):
             self.open_file(index)
         elif action == open_folder_action:
             self.open_folder(index)
+        elif action == copy_path_action:
+            self.copy_path(index)
+        elif action == rename_action:
+            self.rename_file(index)
+        elif action == delete_action:
+            self.delete_file(index)
 
     def open_file(self, index):
         data = self.results[index.row()]
@@ -285,6 +297,61 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["open", path])
         else:
             subprocess.Popen(["xdg-open", path])
+
+    def export_results(self):
+        if not self.results:
+            QMessageBox.warning(self, "Export Results", "There are no results to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Results", "",
+                                                   "CSV Files (*.csv);;JSON Files (*.json)")
+        if not file_path:
+            return
+
+        df = pd.DataFrame(self.results)
+        if file_path.endswith(".csv"):
+            df.to_csv(file_path, index=False)
+        elif file_path.endswith(".json"):
+            df.to_json(file_path, orient="records", indent=4)
+
+        QMessageBox.information(self, "Export Results", f"Results exported to {file_path}")
+
+    def copy_path(self, index):
+        data = self.results[index.row()]
+        path = data['path']
+        QApplication.clipboard().setText(path)
+
+    def rename_file(self, index):
+        if len(self.results_view.selectedIndexes()) != 1:
+            QMessageBox.warning(self, "Rename File", "Please select a single file to rename.")
+            return
+        data = self.results[index.row()]
+        old_path = data['path']
+        new_name, ok = QInputDialog.getText(self, "Rename File", "Enter new name:", text=data['name'])
+        if ok and new_name:
+            new_path = os.path.join(os.path.dirname(old_path), new_name)
+            try:
+                os.rename(old_path, new_path)
+                self.search_files()
+            except OSError as e:
+                QMessageBox.critical(self, "Error", f"Could not rename file: {e}")
+
+    def delete_file(self, index):
+        indexes = self.results_view.selectedIndexes()
+        if not indexes:
+            return
+
+        reply = QMessageBox.question(self, "Delete Files", f"Are you sure you want to delete {len(indexes)} files?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            for index in indexes:
+                data = self.results[index.row()]
+                path = data['path']
+                try:
+                    os.remove(path)
+                except OSError as e:
+                    QMessageBox.critical(self, "Error", f"Could not delete file: {e}")
+            self.search_files()
 
     def add_favorite(self):
         path = QFileDialog.getExistingDirectory(self, "Select Folder to Add to Favorites")
