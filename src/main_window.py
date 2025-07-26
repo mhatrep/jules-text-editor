@@ -2,13 +2,15 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter, QTextEdit,
     QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget,
     QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox, QFileIconProvider,
-    QTableView, QScrollArea, QMenu
+    QTableView, QScrollArea, QMenu, QFileSystemModel, QListWidget, QAction,
+    QFileDialog
 )
 import os
 import pandas as pd
 import fitz
 import subprocess
 import sys
+import json
 from PyQt5.QtCore import Qt, QThread, QTimer, QDate, QFileInfo
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap, QImage
 from src.file_indexer import FileIndexer
@@ -63,9 +65,41 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.filter_panel)
         self.filter_panel.setVisible(False)
 
-        # Create the main splitter
+        # Main Splitter
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.layout.addWidget(self.main_splitter)
+
+        # Left Panel
+        self.left_panel = QWidget()
+        self.left_layout = QVBoxLayout(self.left_panel)
+        self.main_splitter.addWidget(self.left_panel)
+
+        self.dir_explorer = QTreeView()
+        self.fs_model = QFileSystemModel()
+        self.fs_model.setRootPath('')
+        self.dir_explorer.setModel(self.fs_model)
+        self.dir_explorer.setRootIndex(self.fs_model.index(''))
+        self.dir_explorer.selectionModel().selectionChanged.connect(self.on_dir_selected)
+        self.left_layout.addWidget(self.dir_explorer)
+
+        self.favorites_list = QListWidget()
+        self.favorites_list.itemClicked.connect(self.on_favorite_selected)
+        self.left_layout.addWidget(self.favorites_list)
+
+        self.favorites_toolbar = QHBoxLayout()
+        self.add_fav_button = QPushButton("Add Fav")
+        self.add_fav_button.clicked.connect(self.add_favorite)
+        self.rem_fav_button = QPushButton("Rem Fav")
+        self.rem_fav_button.clicked.connect(self.remove_favorite)
+        self.favorites_toolbar.addWidget(self.add_fav_button)
+        self.favorites_toolbar.addWidget(self.rem_fav_button)
+        self.left_layout.addLayout(self.favorites_toolbar)
+
+        self.load_favorites()
+
+        # Center Panel
+        self.center_splitter = QSplitter(Qt.Vertical)
+        self.main_splitter.addWidget(self.center_splitter)
 
         self.file_type_filter_layout = QHBoxLayout()
         self.file_type_filters = {}
@@ -97,18 +131,19 @@ class MainWindow(QMainWindow):
         self.end_date_filter.setCalendarPopup(True)
         self.filter_layout.addRow("To date:", self.end_date_filter)
 
+        self.time_range_filter = QComboBox()
+        self.time_range_filter.addItems(["All time", "Today", "This week", "This month", "This year"])
+        self.filter_layout.addRow("Time range:", self.time_range_filter)
+
         self.min_size_filter.valueChanged.connect(self.search_files)
         self.max_size_filter.valueChanged.connect(self.search_files)
         self.start_date_filter.dateChanged.connect(self.search_files)
         self.end_date_filter.dateChanged.connect(self.search_files)
+        self.time_range_filter.currentIndexChanged.connect(self.on_time_range_changed)
 
         self.fuzzy_checkbox = QCheckBox("Enable fuzzy matching")
         self.filter_layout.addRow(self.fuzzy_checkbox)
         self.fuzzy_checkbox.stateChanged.connect(self.search_files)
-
-        # Center splitter (results and preview)
-        self.center_splitter = QSplitter(Qt.Vertical)
-        self.main_splitter.addWidget(self.center_splitter)
 
         # Search results view
         self.results_view = QTreeView()
@@ -250,6 +285,60 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["open", path])
         else:
             subprocess.Popen(["xdg-open", path])
+
+    def add_favorite(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Folder to Add to Favorites")
+        if path:
+            self.favorites_list.addItem(path)
+            self.save_favorites()
+
+    def remove_favorite(self):
+        for item in self.favorites_list.selectedItems():
+            self.favorites_list.takeItem(self.favorites_list.row(item))
+        self.save_favorites()
+
+    def on_favorite_selected(self, item):
+        path = item.text()
+        self.indexer.index_files(path)
+        self.search_files()
+
+    def load_favorites(self):
+        if os.path.exists("favorites.json"):
+            with open("favorites.json", "r") as f:
+                favorites = json.load(f)
+                self.favorites_list.addItems(favorites)
+
+    def save_favorites(self):
+        favorites = [self.favorites_list.item(i).text() for i in range(self.favorites_list.count())]
+        with open("favorites.json", "w") as f:
+            json.dump(favorites, f)
+
+    def on_time_range_changed(self, index):
+        today = QDate.currentDate()
+        if index == 0: # All time
+            self.start_date_filter.setDate(today.addYears(-10))
+            self.end_date_filter.setDate(today)
+        elif index == 1: # Today
+            self.start_date_filter.setDate(today)
+            self.end_date_filter.setDate(today)
+        elif index == 2: # This week
+            self.start_date_filter.setDate(today.addDays(-today.dayOfWeek() + 1))
+            self.end_date_filter.setDate(today)
+        elif index == 3: # This month
+            self.start_date_filter.setDate(QDate(today.year(), today.month(), 1))
+            self.end_date_filter.setDate(today)
+        elif index == 4: # This year
+            self.start_date_filter.setDate(QDate(today.year(), 1, 1))
+            self.end_date_filter.setDate(today)
+        self.search_files()
+
+    def on_dir_selected(self, selected, deselected):
+        if not selected.indexes():
+            return
+        index = selected.indexes()[0]
+        path = self.fs_model.filePath(index)
+        self.indexer.index_files(path)
+        self.search_files()
 
     def toggle_font_size(self):
         self.large_font = not self.large_font
