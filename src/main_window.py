@@ -1,11 +1,16 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter, QTextEdit,
     QLineEdit, QPushButton, QHBoxLayout, QTreeView, QLabel, QStackedWidget,
-    QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox, QFileIconProvider
+    QFormLayout, QComboBox, QSpinBox, QDateEdit, QCheckBox, QFileIconProvider,
+    QTableView, QScrollArea, QMenu
 )
 import os
+import pandas as pd
+import fitz
+import subprocess
+import sys
 from PyQt5.QtCore import Qt, QThread, QTimer, QDate, QFileInfo
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QPixmap, QImage
 from src.file_indexer import FileIndexer
 from src.highlighter import Highlighter
 from src.result_delegate import ResultDelegate
@@ -93,6 +98,8 @@ class MainWindow(QMainWindow):
         self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified', 'Snippet'])
         self.results_view.setItemDelegate(ResultDelegate(self.results_view))
         self.results_view.selectionModel().selectionChanged.connect(self.on_result_selected)
+        self.results_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_view.customContextMenuRequested.connect(self.show_context_menu)
         self.center_splitter.addWidget(self.results_view)
 
         # File preview panel
@@ -102,9 +109,17 @@ class MainWindow(QMainWindow):
         self.text_preview = QTextEdit()
         self.image_preview = QLabel()
         self.image_preview.setAlignment(Qt.AlignCenter)
+        self.table_preview = QTableView()
+        self.pdf_preview_area = QScrollArea()
+        self.pdf_preview_label = QLabel()
+        self.pdf_preview_area.setWidget(self.pdf_preview_label)
+        self.pdf_preview_area.setWidgetResizable(True)
+
 
         self.preview_stack.addWidget(self.text_preview)
         self.preview_stack.addWidget(self.image_preview)
+        self.preview_stack.addWidget(self.table_preview)
+        self.preview_stack.addWidget(self.pdf_preview_area)
 
         # Set initial sizes
         self.main_splitter.setSizes([200, 1000])
@@ -160,7 +175,26 @@ class MainWindow(QMainWindow):
         data = self.results[index.row()]
         query = self.search_input.currentText()
 
-        if data['type'] in self.indexer.TEXT_EXTENSIONS or data['type'] in ['.docx', '.pdf', '.csv', '.xlsx']:
+        if data['type'] in ['.csv', '.xlsx']:
+            if data['type'] == '.csv':
+                df = pd.read_csv(data['path'])
+            else:
+                df = pd.read_excel(data['path'])
+
+            model = QStandardItemModel()
+            model.setHorizontalHeaderLabels(df.columns)
+            for row in df.values:
+                items = [QStandardItem(str(item)) for item in row]
+                model.appendRow(items)
+            self.table_preview.setModel(model)
+            self.preview_stack.setCurrentWidget(self.table_preview)
+        elif data['type'] == '.pdf':
+            doc = fitz.open(data['path'])
+            pix = doc.get_page_pixmap(0)
+            image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
+            self.pdf_preview_label.setPixmap(QPixmap.fromImage(image))
+            self.preview_stack.setCurrentWidget(self.pdf_preview_area)
+        elif data['type'] in self.indexer.TEXT_EXTENSIONS or data['type'] in ['.docx']:
             self.text_preview.setPlainText(data['content'])
             self.highlighter = Highlighter(self.text_preview.document(), query.split())
             self.preview_stack.setCurrentWidget(self.text_preview)
@@ -168,3 +202,39 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap(data['path'])
             self.image_preview.setPixmap(pixmap.scaled(self.image_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.preview_stack.setCurrentWidget(self.image_preview)
+
+    def show_context_menu(self, pos):
+        index = self.results_view.indexAt(pos)
+        if not index.isValid():
+            return
+
+        menu = QMenu(self)
+        open_action = menu.addAction("Open")
+        open_folder_action = menu.addAction("Open Containing Folder")
+
+        action = menu.exec_(self.results_view.viewport().mapToGlobal(pos))
+
+        if action == open_action:
+            self.open_file(index)
+        elif action == open_folder_action:
+            self.open_folder(index)
+
+    def open_file(self, index):
+        data = self.results[index.row()]
+        path = data['path']
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+
+    def open_folder(self, index):
+        data = self.results[index.row()]
+        path = os.path.dirname(data['path'])
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
