@@ -58,15 +58,15 @@ class FileIndexer(QObject):
                     pass
         self.finished.emit()
 
-    def search_files(self, query, file_type=None, min_size=None, max_size=None, start_date=None, end_date=None, fuzzy=False):
+    def search_files(self, query, file_types=None, min_size=None, max_size=None, start_date=None, end_date=None, fuzzy=False):
         query = query.lower()
         terms = query.split()
 
         results = list(self.files.values())
 
         # Filter by file type
-        if file_type and file_type != "All":
-            results = [data for data in results if data['type'] == file_type]
+        if file_types:
+            results = [data for data in results if data['type'] in file_types]
 
         # Filter by size
         if min_size is not None:

@@ -41,8 +41,8 @@ class MainWindow(QMainWindow):
 
         # Toolbar
         self.toolbar = self.addToolBar("Main")
-        self.toggle_nav_action = self.toolbar.addAction("Toggle Nav")
-        self.toggle_nav_action.triggered.connect(self.toggle_nav_panel)
+        self.toggle_filters_action = self.toolbar.addAction("Toggle Filters")
+        self.toggle_filters_action.triggered.connect(self.toggle_filter_panel)
         self.toggle_preview_action = self.toolbar.addAction("Toggle Preview")
         self.toggle_preview_action.triggered.connect(self.toggle_preview_panel)
         self.theme_action = self.toolbar.addAction("Toggle Theme")
@@ -57,47 +57,53 @@ class MainWindow(QMainWindow):
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.search_files)
 
+        # Filter panel
+        self.filter_panel = QWidget()
+        self.filter_layout = QFormLayout(self.filter_panel)
+        self.layout.addWidget(self.filter_panel)
+        self.filter_panel.setVisible(False)
+
         # Create the main splitter
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.layout.addWidget(self.main_splitter)
 
-        # Left panel (navigation/filter)
-        self.nav_panel = QWidget()
-        self.nav_layout = QFormLayout(self.nav_panel)
-        self.main_splitter.addWidget(self.nav_panel)
-
-        self.file_type_filter = QComboBox()
-        self.file_type_filter.addItems(["All", ".txt", ".pdf", ".docx", ".csv", ".xlsx"])
-        self.nav_layout.addRow("File type:", self.file_type_filter)
+        self.file_type_filter_layout = QHBoxLayout()
+        self.file_type_filters = {}
+        for file_type in ["All", ".txt", ".pdf", ".docx", ".csv", ".xlsx"]:
+            checkbox = QCheckBox(file_type)
+            checkbox.setChecked(True)
+            checkbox.stateChanged.connect(self.search_files)
+            self.file_type_filter_layout.addWidget(checkbox)
+            self.file_type_filters[file_type] = checkbox
+        self.filter_layout.addRow("File type:", self.file_type_filter_layout)
 
         self.min_size_filter = QSpinBox()
         self.min_size_filter.setRange(0, 1024 * 1024)
         self.min_size_filter.setSuffix(" KB")
-        self.nav_layout.addRow("Min size:", self.min_size_filter)
+        self.filter_layout.addRow("Min size:", self.min_size_filter)
 
         self.max_size_filter = QSpinBox()
         self.max_size_filter.setRange(0, 1024 * 1024)
         self.max_size_filter.setSuffix(" KB")
-        self.nav_layout.addRow("Max size:", self.max_size_filter)
+        self.filter_layout.addRow("Max size:", self.max_size_filter)
 
         self.start_date_filter = QDateEdit()
         self.start_date_filter.setDate(QDate.currentDate().addYears(-1))
         self.start_date_filter.setCalendarPopup(True)
-        self.nav_layout.addRow("From date:", self.start_date_filter)
+        self.filter_layout.addRow("From date:", self.start_date_filter)
 
         self.end_date_filter = QDateEdit()
         self.end_date_filter.setDate(QDate.currentDate())
         self.end_date_filter.setCalendarPopup(True)
-        self.nav_layout.addRow("To date:", self.end_date_filter)
+        self.filter_layout.addRow("To date:", self.end_date_filter)
 
-        self.file_type_filter.currentIndexChanged.connect(self.search_files)
         self.min_size_filter.valueChanged.connect(self.search_files)
         self.max_size_filter.valueChanged.connect(self.search_files)
         self.start_date_filter.dateChanged.connect(self.search_files)
         self.end_date_filter.dateChanged.connect(self.search_files)
 
         self.fuzzy_checkbox = QCheckBox("Enable fuzzy matching")
-        self.nav_layout.addRow(self.fuzzy_checkbox)
+        self.filter_layout.addRow(self.fuzzy_checkbox)
         self.fuzzy_checkbox.stateChanged.connect(self.search_files)
 
         # Center splitter (results and preview)
@@ -158,14 +164,17 @@ class MainWindow(QMainWindow):
                 self.search_input.removeItem(10)
 
 
-        file_type = self.file_type_filter.currentText()
+        file_types = [ft for ft, cb in self.file_type_filters.items() if cb.isChecked()]
+        if "All" in file_types:
+            file_types = None
+
         min_size = self.min_size_filter.value()
         max_size = self.max_size_filter.value()
         start_date = self.start_date_filter.date().toPyDate()
         end_date = self.end_date_filter.date().toPyDate()
         fuzzy = self.fuzzy_checkbox.isChecked()
 
-        self.results = self.indexer.search_files(query, file_type, min_size, max_size, start_date, end_date, fuzzy)
+        self.results = self.indexer.search_files(query, file_types, min_size, max_size, start_date, end_date, fuzzy)
         self.results_model.clear()
         self.results_model.setHorizontalHeaderLabels(['Name', 'Path', 'Size', 'Date Modified', 'Snippet'])
         provider = QFileIconProvider()
@@ -260,8 +269,8 @@ class MainWindow(QMainWindow):
             with open("src/light_theme.qss", "r") as f:
                 self.setStyleSheet(f.read())
 
-    def toggle_nav_panel(self):
-        self.nav_panel.setVisible(not self.nav_panel.isVisible())
+    def toggle_filter_panel(self):
+        self.filter_panel.setVisible(not self.filter_panel.isVisible())
 
     def toggle_preview_panel(self):
         self.center_splitter.widget(1).setVisible(not self.center_splitter.widget(1).isVisible())
