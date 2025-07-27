@@ -25,8 +25,9 @@ class ResultDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, QColor("white"))
 
         # Draw icon
+        icon_rect = option.rect
+        icon_rect.setWidth(0)
         if icon:
-            icon_rect = option.rect
             icon_rect.setWidth(32)
             icon.paint(painter, icon_rect, Qt.AlignCenter)
 
