@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self.export_action = self.toolbar.addAction("Export Results")
         self.export_action.triggered.connect(self.export_results)
         self.recent_searches = []
+        self.results = []
         self.dark_theme = False
         self.large_font = False
 
